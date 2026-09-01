@@ -1161,7 +1161,9 @@ SignatureData CombineSignatures(const CTxOut& txout, const CMutableTransaction& 
     SignatureData data;
     data.MergeSignatureData(scriptSig1);
     data.MergeSignatureData(scriptSig2);
-    ProduceSignature(DUMMY_SIGNING_PROVIDER, MutableTransactionSignatureCreator(&tx, 0, txout.nValue), txout.scriptPubKey, data);
+    // The fColdStake argument was added by this fork without a default, which is why
+    // this inherited test stopped compiling. Not a cold stake here, as everywhere else.
+    ProduceSignature(DUMMY_SIGNING_PROVIDER, MutableTransactionSignatureCreator(&tx, 0, txout.nValue), txout.scriptPubKey, data, false);
     return data;
 }
 
