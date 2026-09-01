@@ -182,6 +182,58 @@ static RPCHelpMan generate()
     }};
 }
 
+/**
+ * Mine `nGenerate` proof-of-work blocks to `coinbase_script`.
+ *
+ * This fork had stubbed generatetoaddress out to return an empty array, which left
+ * regtest unable to produce blocks at all and is why the PoS layer has no functional
+ * test coverage. Restored so the chain can be tested. Proof-of-work blocks are only
+ * accepted at or below consensus.nLastPOWBlock, so on mainnet/testnet this is bounded
+ * by consensus regardless of what is requested here.
+ */
+static UniValue generateBlocks(ChainstateManager& chainman, const CTxMemPool& mempool, const CScript& coinbase_script, int nGenerate, uint64_t nMaxTries)
+{
+    int nHeightEnd = 0;
+    int nHeight = 0;
+
+    {
+        LOCK(cs_main);
+        nHeight = ::ChainActive().Height();
+        nHeightEnd = nHeight + nGenerate;
+    }
+    unsigned int nExtraNonce = 0;
+    UniValue blockHashes(UniValue::VARR);
+    while (nHeight < nHeightEnd && !ShutdownRequested()) {
+        std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(mempool, Params()).CreateNewBlock(coinbase_script));
+        if (!pblocktemplate.get()) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+        }
+        CBlock *pblock = &pblocktemplate->block;
+        {
+            LOCK(cs_main);
+            IncrementExtraNonce(pblock, ::ChainActive().Tip(), nExtraNonce);
+        }
+        while (nMaxTries > 0 && pblock->nNonce < std::numeric_limits<uint32_t>::max() &&
+               !CheckProofOfWork(pblock->GetHash(), pblock->nBits, Params().GetConsensus()) && !ShutdownRequested()) {
+            ++pblock->nNonce;
+            --nMaxTries;
+        }
+        if (nMaxTries == 0 || ShutdownRequested()) {
+            break;
+        }
+        if (pblock->nNonce == std::numeric_limits<uint32_t>::max()) {
+            continue;
+        }
+        std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
+        if (!chainman.ProcessNewBlock(Params(), shared_pblock, true, nullptr)) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "ProcessNewBlock, block not accepted");
+        }
+        ++nHeight;
+        blockHashes.push_back(pblock->GetHash().GetHex());
+    }
+    return blockHashes;
+}
+
 static RPCHelpMan generatetoaddress()
 {
     return RPCHelpMan{"generatetoaddress",
@@ -204,7 +256,20 @@ static RPCHelpMan generatetoaddress()
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    return UniValue(UniValue::VARR);
+    const int num_blocks{request.params[0].get_int()};
+    const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : (uint64_t)request.params[2].get_int()};
+
+    CTxDestination destination = DecodeDestination(request.params[1].get_str());
+    if (!IsValidDestination(destination)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Error: Invalid address");
+    }
+
+    const CTxMemPool& mempool = EnsureMemPool(request.context);
+    ChainstateManager& chainman = EnsureChainman(request.context);
+
+    CScript coinbase_script = GetScriptForDestination(destination);
+
+    return generateBlocks(chainman, mempool, coinbase_script, num_blocks, max_tries);
 },
     };
 }

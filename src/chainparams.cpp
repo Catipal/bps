@@ -490,6 +490,27 @@ void CRegTestParams::UpdateActivationParametersFromArgs(const ArgsManager& args)
         consensus.SegwitHeight = static_cast<int>(height);
     }
 
+    // Regtest ships with nLastPOWBlock = INT_MAX, which makes ConnectBlock reject
+    // proof-of-stake at every height and leaves the whole PoS layer untestable.
+    // Allow tests to lower it.
+    if (args.IsArgSet("-lastpowblock")) {
+        int64_t height = args.GetArg("-lastpowblock", consensus.nLastPOWBlock);
+        if (height < 0 || height >= std::numeric_limits<int>::max()) {
+            throw std::runtime_error(strprintf("Height %ld for -lastpowblock is out of valid range.", height));
+        }
+        consensus.nLastPOWBlock = static_cast<int>(height);
+    }
+
+    if (args.IsArgSet("-coldstakeheight")) {
+        int64_t height = args.GetArg("-coldstakeheight", consensus.BPSColdStakeEnableHeight);
+        if (height < 0 || height >= std::numeric_limits<int>::max()) {
+            throw std::runtime_error(strprintf("Height %ld for -coldstakeheight is out of valid range.", height));
+        }
+        consensus.BPSColdStakeEnableHeight = static_cast<int>(height);
+        // nLastMPoSBlock tracks the cold stake activation height on every chain.
+        consensus.nLastMPoSBlock = consensus.BPSColdStakeEnableHeight;
+    }
+
     if (!args.IsArgSet("-vbparams")) return;
 
     for (const std::string& strDeployment : args.GetArgs("-vbparams")) {
