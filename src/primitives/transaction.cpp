@@ -77,12 +77,28 @@ bool CMutableTransaction::CheckColdStake(const CScript& script) const
             if (vin[i].scriptSig != firstScript) return false;
     }
 
-    // all outputs except first (coinstake marker) and last (staker payout)
-    // have the same pubKeyScript and it matches the script we are spending
+    // Every output except the coinstake marker must pay back to the script we are
+    // spending, apart from at most one: the staker's fee.
+    //
+    // This previously guarded the loop with vin.size() rather than vout.size(), so a
+    // coinstake with three or fewer inputs - the common case is one - skipped the check
+    // on its middle outputs entirely. That was not exploitable, because ConnectBlock
+    // independently applies CheckColdStakeOutputs() and CheckReward(), which between
+    // them allow at most one differing output and pin its value to exactly
+    // COLD_STAKER_FEE percent of the block reward. But it left the script-level rule -
+    // the one thing restricting a staking key on its own - doing nothing.
+    //
+    // The condition below is deliberately the same one CheckColdStakeOutputs() already
+    // enforces on every block, rather than the stricter "all but the last output" the
+    // comment used to claim. Anything that was valid before therefore stays valid, so
+    // this needs no activation height.
     if (vout[1].scriptPubKey != script) return false;
-    if (vin.size() > 3) {
-        for (unsigned int i=2; i<vout.size()-1; i++)
-            if (vout[i].scriptPubKey != script) return false;
+    bool foundStakerOutput = false;
+    for (unsigned int i = 2; i < vout.size(); i++) {
+        if (vout[i].scriptPubKey != script) {
+            if (foundStakerOutput) return false;
+            foundStakerOutput = true;
+        }
     }
 
     return true;
@@ -136,12 +152,28 @@ bool CTransaction::CheckColdStake(const CScript& script) const
             if (vin[i].scriptSig != firstScript) return false;
     }
 
-    // all outputs except first (coinstake marker) and last (staker payout)
-    // have the same pubKeyScript and it matches the script we are spending
+    // Every output except the coinstake marker must pay back to the script we are
+    // spending, apart from at most one: the staker's fee.
+    //
+    // This previously guarded the loop with vin.size() rather than vout.size(), so a
+    // coinstake with three or fewer inputs - the common case is one - skipped the check
+    // on its middle outputs entirely. That was not exploitable, because ConnectBlock
+    // independently applies CheckColdStakeOutputs() and CheckReward(), which between
+    // them allow at most one differing output and pin its value to exactly
+    // COLD_STAKER_FEE percent of the block reward. But it left the script-level rule -
+    // the one thing restricting a staking key on its own - doing nothing.
+    //
+    // The condition below is deliberately the same one CheckColdStakeOutputs() already
+    // enforces on every block, rather than the stricter "all but the last output" the
+    // comment used to claim. Anything that was valid before therefore stays valid, so
+    // this needs no activation height.
     if (vout[1].scriptPubKey != script) return false;
-    if (vin.size() > 3) {
-        for (unsigned int i=2; i<vout.size()-1; i++)
-            if (vout[i].scriptPubKey != script) return false;
+    bool foundStakerOutput = false;
+    for (unsigned int i = 2; i < vout.size(); i++) {
+        if (vout[i].scriptPubKey != script) {
+            if (foundStakerOutput) return false;
+            foundStakerOutput = true;
+        }
     }
 
     return true;
