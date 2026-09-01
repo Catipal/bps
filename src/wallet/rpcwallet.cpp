@@ -552,10 +552,17 @@ UniValue CreateColdStakeDelegation(const UniValue& params, CWallet* const pwalle
     if (!stakeKey)
         throw JSONRPCError(RPC_WALLET_ERROR, "Unable to get stake pubkey hash from address");
 
+    // Self-delegation is meaningful when the staking key is held separately from the
+    // owner key: consensus (OP_CHECKCOLDSTAKEVERIFY) restricts the staking key to
+    // producing coinstakes that pay back to the owner, so it can be kept unencrypted
+    // and stake without a passphrase. Off by default; the caller must opt in.
+    bool fAllowSelfDelegation = params.size() > 4 && !params[4].isNull() && params[4].get_bool();
+
     LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
-    if (spk_man.HaveKey(ToKeyID(*stakeKey))) {
+    if (!fAllowSelfDelegation && spk_man.HaveKey(ToKeyID(*stakeKey))) {
         std::string errMsg = strprintf("The provided staker_address \"%s\" is present in this wallet.\n", params[0].get_str());
-        errMsg += "You can already stake the coins, there is no need to delegate them to yourself.";
+        errMsg += "You can already stake the coins, there is no need to delegate them to yourself.\n";
+        errMsg += "Pass allow_self_delegation=true if the staking key is deliberately held here.";
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, errMsg);
     }
 
@@ -633,6 +640,9 @@ static RPCHelpMan delegatestake()
                     {"owner_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The BitcoinPoS address corresponding to the key that will be able to spend the stake."},
                     {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount in " + CURRENCY_UNIT + " to delegate for staking. eg 100"},
                     {"include_delegated", RPCArg::Type::BOOL, "false", "Include already delegated inputs if needed."},
+                    {"allow_self_delegation", RPCArg::Type::BOOL, "false", "Allow delegating to a staker_address held by this same wallet.\n"
+                        "Useful when the staking key is kept separately from the owner key (for example unencrypted, so the\n"
+                        "node can stake without a passphrase) since consensus restricts the staking key to producing coinstakes."},
                 },
                 RPCResult{
                     RPCResult::Type::OBJ, "", "",
@@ -4825,7 +4835,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "send",                             &send,                          {"outputs","conf_target","estimate_mode","fee_rate","options"} },
     { "wallet",             "sendmany",                         &sendmany,                      {"dummy","amounts","minconf","comment","subtractfeefrom","replaceable","conf_target","estimate_mode","fee_rate","verbose"} },
     { "wallet",             "sendtoaddress",                    &sendtoaddress,                 {"address","amount","comment","comment_to","subtractfeefromamount","replaceable","conf_target","estimate_mode","avoid_reuse","fee_rate","verbose"} },
-    { "wallet",             "delegatestake",                    &delegatestake,                 {"staker_address", "owner_address", "amount", "include_delegated"} },
+    { "wallet",             "delegatestake",                    &delegatestake,                 {"staker_address", "owner_address", "amount", "include_delegated", "allow_self_delegation"} },
     { "wallet",             "sethdseed",                        &sethdseed,                     {"newkeypool","seed"} },
     { "wallet",             "setlabel",                         &setlabel,                      {"address","label"} },
     { "wallet",             "settxfee",                         &settxfee,                      {"amount"} },

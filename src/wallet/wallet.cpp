@@ -2095,7 +2095,16 @@ CAmount CWalletTx::GetStakeCredit(bool fUseCache, const isminefilter& filter) co
             bool stakeable = ((TxoutType::PUBKEY ==  whichtype) || (TxoutType::PUBKEYHASH == whichtype) ||
                 (includeColdStaking && TxoutType::COLDSTAKE == whichtype));
             if (stakeable) {
-                nCredit += pwallet->GetCredit(txout, filter);
+                // A self-delegated P2CS output is reported as SPENDABLE_DELEGATED (we hold
+                // the owner key too), so GetCredit would miss it under a staking filter even
+                // though we hold the staking key and can stake it. Count it against the COLD
+                // part of the filter, which is what "we can stake this" means here.
+                if ((filter & ISMINE_COLD) && pwallet->IsMine(txout) == ISMINE_SPENDABLE_DELEGATED
+                        && pwallet->HaveColdStakeKeyFor(txout)) {
+                    nCredit += txout.nValue;
+                } else {
+                    nCredit += pwallet->GetCredit(txout, filter);
+                }
                 if (!MoneyRange(nCredit))
                     throw std::runtime_error(std::string(__func__) + " : value out of range");
             }
@@ -2497,6 +2506,18 @@ void CWallet::AvailableCoins(std::vector<COutput>& vCoins, bool fOnlySafe, const
     }
 }
 
+bool CWallet::HaveColdStakeKeyFor(const CTxOut& txout) const
+{
+    std::vector<valtype> solutions;
+    if (Solver(txout.scriptPubKey, solutions) != TxoutType::COLDSTAKE || solutions.empty()) {
+        return false;
+    }
+    // vSolutions[0] is the staking key hash, vSolutions[1] the owner's.
+    const LegacyScriptPubKeyMan* spk_man = GetLegacyScriptPubKeyMan();
+    if (!spk_man) return false;
+    return spk_man->HaveKey(CKeyID(uint160(solutions[0])));
+}
+
 void CWallet::AvailableCoinsForStaking(std::vector<COutput>& vCoins) const
 {
     AssertLockHeld(cs_wallet);
@@ -2524,7 +2545,11 @@ void CWallet::AvailableCoinsForStaking(std::vector<COutput>& vCoins) const
             if (!IsSpent(wtxid, i))
             {
                 isminetype mine = IsMine(pcoin->tx->vout[i]);
-                if ((mine != ISMINE_NO) && (mine != ISMINE_SPENDABLE_DELEGATED) && !IsLockedCoin((*it).first, i) && (pcoin->tx->vout[i].nValue > 0))
+                // A coin we delegated away is not ours to stake - unless we kept the
+                // staking key ourselves (self-delegation), in which case IsMine only
+                // says SPENDABLE_DELEGATED because we also hold the owner key.
+                const bool self_delegated = (mine == ISMINE_SPENDABLE_DELEGATED) && HaveColdStakeKeyFor(pcoin->tx->vout[i]);
+                if ((mine != ISMINE_NO) && (mine != ISMINE_SPENDABLE_DELEGATED || self_delegated) && !IsLockedCoin((*it).first, i) && (pcoin->tx->vout[i].nValue > 0))
                 {
                     if (mine == ISMINE_COLD && !includeColdStaking)
                         continue;
@@ -2534,8 +2559,11 @@ void CWallet::AvailableCoinsForStaking(std::vector<COutput>& vCoins) const
                             (includeColdStaking && TxoutType::COLDSTAKE == whichtype))
                     {
                         std::unique_ptr<SigningProvider> provider = GetSolvingProvider(pcoin->tx->vout[i].scriptPubKey);
-                        bool solvable = IsSolvable(*provider, pcoin->tx->vout[i].scriptPubKey, mine == ISMINE_COLD);
-                        bool spendable = ((mine & ISMINE_SPENDABLE) != ISMINE_NO) ||
+                        // Self-delegated outputs are spent through the staking branch here,
+                        // same as any other cold stake.
+                        bool solvable = IsSolvable(*provider, pcoin->tx->vout[i].scriptPubKey, mine == ISMINE_COLD || self_delegated);
+                        bool spendable = self_delegated ||
+                            ((mine & ISMINE_SPENDABLE) != ISMINE_NO) ||
                             (((mine & ISMINE_WATCH_ONLY) != ISMINE_NO) && solvable) ||
                             ((mine & (includeColdStaking ? ISMINE_COLD : ISMINE_NO)) != ISMINE_NO);
                         vCoins.push_back(COutput(pcoin, i, nDepth, spendable, solvable, pcoin->IsTrusted()));
@@ -3581,7 +3609,28 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 scriptPubKeyOut = scriptPubKeyKernel;
                 aggregateScriptPubKeyHashKernel = scriptPubKeyKernel;
                 isColdStake = true;
-                coldStakerScriptPubKeyOut << key.GetPubKey().getvch() << OP_CHECKSIG;
+
+                // The staker fee output is the only script we get to choose here: consensus
+                // checks its value (exactly COLD_STAKER_FEE percent, see CheckReward) but never
+                // its contents. When we are staking our own coins there is no reason to pay that
+                // fee to the staking key, and good reason not to: the staking key is meant to
+                // control nothing spendable, so that it can be kept unencrypted and stake
+                // without a passphrase. Pay the owner instead.
+                //
+                // We can pay to the owner without holding their key - the hash is right there in
+                // the script - which matters when the staking keys live in their own wallet,
+                // separate from the encrypted wallet holding the owner keys.
+                uint160 ownerHash160(vSolutions[1]);
+                CKeyID ownerKeyHash(ownerHash160);
+                if (gArgs.GetBoolArg("-coldstakefeetoowner", DEFAULT_COLDSTAKE_FEE_TO_OWNER) || spk_man->HaveKey(ownerKeyHash))
+                {
+                    coldStakerScriptPubKeyOut = GetScriptForDestination(PKHash(ownerKeyHash));
+                }
+                else
+                {
+                    // Staking someone else's delegation; the fee is genuinely ours to keep.
+                    coldStakerScriptPubKeyOut << key.GetPubKey().getvch() << OP_CHECKSIG;
+                }
             }
 
             txNew.vin.push_back(CTxIn(pcoin.first->GetHash(), pcoin.second));

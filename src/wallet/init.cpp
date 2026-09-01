@@ -6,6 +6,7 @@
 #include <init.h>
 #include <interfaces/chain.h>
 #include <interfaces/wallet.h>
+#include <miner.h>
 #include <net.h>
 #include <node/context.h>
 #include <node/ui_interface.h>
@@ -77,6 +78,9 @@ void WalletInit::AddWalletOptions(ArgsManager& argsman) const
     argsman.AddArg("-stakecache=<n>", "Enables or disables the staking cache; significantly improves staking performance, but can use a lot of memory. 0 = disabled, 1 = enabled (default: enabled)", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-emergencystaking=<n>", "Enable or disable emergecy staking. 0 = disabled, 1 = enabled (default: disabled)", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-aggressivestaking", "Check more often to publish immediately when valid block is found.", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-coldstakefeetoowner=<n>", strprintf("When staking a delegation, pay the cold staker fee to the delegation's owner instead of to the staking key. "
+        "Use this when you are staking your own coins with a separate staking wallet, so the staking key - which may be kept unencrypted - never holds spendable funds. "
+        "Leave disabled when staking on behalf of others, or you will give away your fee. 0 = disabled, 1 = enabled (default: %u)", DEFAULT_COLDSTAKE_FEE_TO_OWNER), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
 
     argsman.AddHiddenArgs({"-zapwallettxes"});
 }

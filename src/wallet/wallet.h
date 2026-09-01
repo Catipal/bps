@@ -818,6 +818,17 @@ public:
     void AvailableP2CSCoins(std::vector<COutput>& vCoins) const;
 
     /**
+     * True if txout is a pay-to-cold-stake output whose *staking* key this wallet holds.
+     *
+     * IsMine() reports such an output as SPENDABLE_DELEGATED whenever we also hold the
+     * owner key, because for spending purposes that is what matters. But it means a
+     * wallet holding both keys - a self-delegation, where the staking key is kept apart
+     * from the owner key so it can stake without a passphrase - looks unstakeable. This
+     * lets the staking paths ask the question they actually care about.
+     */
+    bool HaveColdStakeKeyFor(const CTxOut& txout) const;
+
+    /**
      * Return list of available coins and locked coins grouped by non-change output address.
      */
     std::map<CTxDestination, std::vector<COutput>> ListCoins() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);

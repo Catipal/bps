@@ -31,6 +31,9 @@ static const bool DEFAULT_STAKE = true;
 
 //! Default for -coldstaking
 static const bool DEFAULT_COLDSTAKING = true;
+/** Pay the cold staker fee to the delegation owner rather than the staking key.
+ *  Off by default: a node staking for other people is entitled to its fee. */
+static const bool DEFAULT_COLDSTAKE_FEE_TO_OWNER = false;
 
 static const bool DEFAULT_STAKE_CACHE = true;
 

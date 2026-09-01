@@ -44,6 +44,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendtoaddress", 9, "fee_rate"},
     { "sendtoaddress", 10, "verbose"},
     { "delegatestake", 3, "include_delegated"},
+    { "delegatestake", 4, "allow_self_delegation"},
     { "settxfee", 0, "amount" },
     { "sethdseed", 0, "newkeypool" },
     { "getreceivedbyaddress", 1, "minconf" },
