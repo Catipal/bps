@@ -1002,7 +1002,11 @@ bool DumpMempool(const CTxMemPool& pool);
 /** Load the mempool from disk. */
 bool LoadMempool(CTxMemPool& pool);
 
-bool CheckReward(const CBlock& block, BlockValidationState& state, int nHeight, const Consensus::Params& consensusParams, CAmount nFees, CAmount nActualStakeReward, const std::vector<CTxOut>& vouts);
+/** Check that a block pays no more than it is owed, and that a cold stake pays its
+ *  staker exactly COLD_STAKER_FEE percent. Note the declaration previously carried a
+ *  trailing vouts parameter for an overload that does not exist, so the real function
+ *  had no usable declaration outside validation.cpp. */
+bool CheckReward(const CBlock& block, BlockValidationState& state, int nHeight, const Consensus::Params& consensusParams, CAmount nFees, CAmount nActualStakeReward);
 
 bool CheckColdStakeOutputs(const CBlock& block);
 
