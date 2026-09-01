@@ -72,7 +72,7 @@ class TestNode():
 
         self.index = i
         self.datadir = datadir
-        self.bitcoinconf = os.path.join(self.datadir, "bitcoin.conf")
+        self.bitcoinconf = os.path.join(self.datadir, "bitcoin-pos.conf")
         self.stdout_dir = os.path.join(self.datadir, "stdout")
         self.stderr_dir = os.path.join(self.datadir, "stderr")
         self.chain = chain
@@ -134,18 +134,21 @@ class TestNode():
     AddressKeyPair = collections.namedtuple('AddressKeyPair', ['address', 'key'])
     PRIV_KEYS = [
             # address , privkey
-            AddressKeyPair('mjTkW3DjgyZck4KbiRusZsqTgaYTxdSz6z', 'cVpF924EspNh8KjYsfhgY96mmxvT6DgdWiTYMtMjuM74hJaU5psW'),
-            AddressKeyPair('msX6jQXvxiNhx3Q62PKeLPrhrqZQdSimTg', 'cUxsWyKyZ9MAQTaAhUQWJmBbSvHMwSmuv59KgxQV7oZQU3PXN3KE'),
-            AddressKeyPair('mnonCMyH9TmAsSj3M59DsbH8H63U3RKoFP', 'cTrh7dkEAeJd6b3MRX9bZK8eRmNqVCMH3LSUkE3dSFDyzjU38QxK'),
-            AddressKeyPair('mqJupas8Dt2uestQDvV2NH3RU8uZh2dqQR', 'cVuKKa7gbehEQvVq717hYcbE9Dqmq7KEBKqWgWrYBa2CKKrhtRim'),
-            AddressKeyPair('msYac7Rvd5ywm6pEmkjyxhbCDKqWsVeYws', 'cQDCBuKcjanpXDpCqacNSjYfxeQj8G6CAtH1Dsk3cXyqLNC4RPuh'),
-            AddressKeyPair('n2rnuUnwLgXqf9kk2kjvVm8R5BZK1yxQBi', 'cQakmfPSLSqKHyMFGwAqKHgWUiofJCagVGhiB4KCainaeCSxeyYq'),
-            AddressKeyPair('myzuPxRwsf3vvGzEuzPfK9Nf2RfwauwYe6', 'cQMpDLJwA8DBe9NcQbdoSb1BhmFxVjWD5gRyrLZCtpuF9Zi3a9RK'),
-            AddressKeyPair('mumwTaMtbxEPUswmLBBN3vM9oGRtGBrys8', 'cSXmRKXVcoouhNNVpcNKFfxsTsToY5pvB9DVsFksF1ENunTzRKsy'),
-            AddressKeyPair('mpV7aGShMkJCZgbW7F6iZgrvuPHjZjH9qg', 'cSoXt6tm3pqy43UMabY6eUTmR3eSUYFtB2iNQDGgb3VUnRsQys2k'),
-            AddressKeyPair('mq4fBNdckGtvY2mijd9am7DRsbRB4KjUkf', 'cN55daf1HotwBAgAKWVgDcoppmUNDtQSfb7XLutTLeAgVc3u8hik'),
-            AddressKeyPair('mpFAHDjX7KregM3rVotdXzQmkbwtbQEnZ6', 'cT7qK7g1wkYEMvKowd2ZrX1E5f6JQ7TM246UfqbCiyF7kZhorpX3'),
-            AddressKeyPair('mzRe8QZMfGi58KyWCse2exxEFry2sfF2Y7', 'cPiRWE8KMjTRxH1MWkPerhfoHFn5iHPWVK5aPqjW8NxmdwenFinJ'),
+            # Bitcoin PoS uses different base58 prefixes to Bitcoin (regtest SECRET_KEY
+            # 130 and PUBKEY_ADDRESS 65, rather than 239 and 111), so these are the
+            # upstream deterministic secrets re-encoded for this chain.
+            AddressKeyPair('TDv1D3WV2gFK87ucb8bDG7KGjNh5HCPZPi', 'LNcWpRnBo4WhuvHpbQgLmAngec2M6c8PmZZLNNbRPBxV1DveJLbE'),
+            AddressKeyPair('TMyMSQpgJR4QL6z6u5zz2dLWudi1x5Fobw', 'LMm9CP3vUPVBC48SRDPAXnsWKZPFwqDgAvF7hSeAbeQpmxgxP5XW'),
+            AddressKeyPair('THG2uNG2VASsFWK4DmpZZpkwKtC5Qjkyoo', 'LLexo3UB5tSdtBbd9G8FnLpZJQUjVao3JBYGkiHJv65QJekkrvDa'),
+            AddressKeyPair('TKmAXb9sZaic2wUR6dAN4WXEWw4AwjKkA1', 'LNhazyqdWtqFCX46pk6MmeH91rwfqVkzSAwJh16DfQscdFDL3Ktn'),
+            AddressKeyPair('TMzqK7ifxnfe9AQFeTRKew51G7z8G7n66i', 'LH1TsK3ZepvqJpNUZKb2fmEaqHWd8eXxRjNoEMyj6NqFeHSwhD2c'),
+            AddressKeyPair('TXK3cV5ggPDY3DLkuTRGBzcE7yhvMQrc47', 'LHP2T57PFgyL5ZuWzg9VYKNRMMuZJb2Sk7oWBYYt4Zdzx7qGLDtJ'),
+            AddressKeyPair('TUTA6xihDMjdJLaFnh511NrU5DpYooAazF', 'LHA5tk2t5NMCRjvt8LcTfch6aQMrW7wyLXXmrpntNfkfTV757Kmw'),
+            AddressKeyPair('TQECAaedwev5rwXnCsrhk9pxr4aVX4mVqs', 'LKL36jFSY3wvUxvmYMLyUhenLWZhYUGgRzKHsjzYir5oDhmqJe77'),
+            AddressKeyPair('TJwNHGjShSytwkBWywn4FvLjxBSLrrAasS', 'LKboZWchy4yyqe2dJLWksW9gHgkLUvheRspAQhWN4tLu6MH8ee2n'),
+            AddressKeyPair('TKWutNvN5yacv6MjcKpvTLhEvPZnFa4rjn', 'LEsMJzNxD42wxmES3FULSeVjhQaGEGrCvSDKMQ88pV26oXM2TFur'),
+            AddressKeyPair('TJhQzE2GT2YM4QdsNWZyEDtaoQ6Vt8mQAc', 'LKv6zXPxrzgF9Wt5fN1E5Yh8xJCCQVu7GuCGgKptCp6Y4V58hJM2'),
+            AddressKeyPair('TUstqQr6zyPmWPZX5aKNMCS3Jf7eBF8N4A', 'LGWhBdrGGybSjsZdEVNK5jMi9tsyifqGkABNQKyBcDpBwrwn76R5'),
     ]
 
     def get_deterministic_priv_key(self):
