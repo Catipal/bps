@@ -32,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <thread>
 #include <stdexcept>
 #include <stdint.h>
 #include <string>
@@ -720,8 +721,15 @@ private:
 
     /**
      * Wallet staking coins.
+     *
+     * The staker used to live in a boost::thread_group stopped with interrupt_all().
+     * That never worked: ThreadStakeMiner spends nearly all its time in
+     * UninterruptibleSleep, which is not an interruption point, so the interrupt was
+     * usually ignored and the thread_group was then deleted out from under a still
+     * running thread that holds this wallet pointer. Use an explicit stop flag and a
+     * real join instead.
      */
-    boost::thread_group* stakeThread = nullptr;
+    std::thread m_stake_thread;
     void StakeBPSs(bool fStake, CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool);
     
     bool CreateTransactionInternal(const std::vector<CRecipient>& vecSend, CTransactionRef& tx, CAmount& nFeeRet, int& nChangePosInOut, bilingual_str& error, const CCoinControl& coin_control, FeeCalculation& fee_calc_out, bool sign, bool fIncludeDelegated);
@@ -1063,6 +1071,8 @@ public:
     int64_t m_last_coin_stake_search_time{0};
     int64_t m_last_coin_stake_search_interval{0};
     std::atomic<bool> m_enabled_staking{false};
+    //! Set to ask ThreadStakeMiner to return; it checks this while sleeping.
+    std::atomic<bool> m_stop_staking{false};
 
     size_t KeypoolCountExternalKeys() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool TopUpKeyPool(unsigned int kpSize = 0);

@@ -536,6 +536,23 @@ bool CheckStake(const std::shared_ptr<const CBlock> pblock, CWallet& wallet, Cha
     return true;
 }
 
+//! Sleep, but wake early if staking has been asked to stop.
+//!
+//! ThreadStakeMiner used to sleep with UninterruptibleSleep throughout, which is not a
+//! boost interruption point, so interrupt_all() could not stop it and shutdown raced
+//! against a thread still using the wallet. Returns false if we should stop.
+static bool StakerSleep(const CWallet& wallet, std::chrono::milliseconds duration)
+{
+    constexpr auto tick = std::chrono::milliseconds{200};
+    while (duration > std::chrono::milliseconds::zero()) {
+        if (wallet.m_stop_staking) return false;
+        const auto slice = std::min(tick, duration);
+        UninterruptibleSleep(slice);
+        duration -= slice;
+    }
+    return !wallet.m_stop_staking;
+}
+
 void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool)
 {
     SetThreadPriority(THREAD_PRIORITY_LOWEST);
@@ -557,16 +574,16 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
     std::set<std::pair<const CWalletTx*,unsigned int> > setCoins;
     uint256 chainTipForCoins;
 
-    while (true)
+    while (!pwallet->m_stop_staking)
     {
         while (pwallet->IsLocked() || !pwallet->m_enabled_staking)
         {
             pwallet->m_last_coin_stake_search_interval = 0;
-            UninterruptibleSleep(std::chrono::milliseconds{10000});
+            if (!StakerSleep(*pwallet, std::chrono::milliseconds{10000})) return;
         }
         // Check if the last PoW block has been mined yet
         if (::ChainActive().Tip()->nHeight < Params().GetConsensus().nLastPOWBlock) {
-            UninterruptibleSleep(std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing * 1000});// sleep one block
+            if (!StakerSleep(*pwallet, std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing * 1000})) return; // sleep one block
             continue;
         }
         // Don't disable PoS mining for no connections if in regtest mode
@@ -574,7 +591,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
             while (connman->GetNodeCount(CConnman::CONNECTIONS_ALL) < 4 || ::ChainstateActive().IsInitialBlockDownload()) {
                 pwallet->m_last_coin_stake_search_interval = 0;
                 fTryToSync = true;
-                UninterruptibleSleep(std::chrono::milliseconds{1000});
+                if (!StakerSleep(*pwallet, std::chrono::milliseconds{1000})) return;
             }
             if (fTryToSync) {
                 fTryToSync = false;
@@ -582,7 +599,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                     ::ChainActive().Tip()->GetBlockTime() < GetTime() - Params().GetConsensus().nPowTargetSpacing ||
                     !::ChainActive().Tip()->HaveTxsDownloaded() ||
                     !::ChainActive().Tip()->IsValid(BLOCK_VALID_TRANSACTIONS)) {
-                    UninterruptibleSleep(std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing / 10 * 1000});
+                    if (!StakerSleep(*pwallet, std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing / 10 * 1000})) return;
                     continue;
                 }
             }
@@ -655,7 +672,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                         // Should always reach here unless we spent too much time processing transactions and the timestamp is now invalid
                         // CheckStake also does CheckBlock and AcceptBlock to propogate it to the network
                         bool validBlock = false;
-                        while (!validBlock) {
+                        while (!validBlock && !pwallet->m_stop_staking) {
                             if (::ChainActive().Tip()->GetBlockHash() != pblockfilled->hashPrevBlock) {
                                 //another block was received while building ours, scrap progress
                                 LogPrintf("ThreadStakeMiner(): Valid future PoS block was orphaned before becoming valid\n");
@@ -672,10 +689,10 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                                     //if being agressive, then check more often to publish immediately when valid. This might allow you to find more blocks, 
                                     //but also increases the chance of broadcasting invalid blocks and getting DoS banned by nodes,
                                     //or receiving more stale/orphan blocks than normal. Use at your own risk.
-                                    UninterruptibleSleep(std::chrono::milliseconds{100});
+                                    if (!StakerSleep(*pwallet, std::chrono::milliseconds{100})) return;
                                 } else {
                                     //too early, so wait 3 seconds and try again
-                                    UninterruptibleSleep(std::chrono::milliseconds{3000});
+                                    if (!StakerSleep(*pwallet, std::chrono::milliseconds{3000})) return;
                                 }
                                 continue;
                             }
@@ -693,23 +710,25 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                 }
             }
         }
-        UninterruptibleSleep(std::chrono::milliseconds{nMinerSleep});
+        if (!StakerSleep(*pwallet, std::chrono::milliseconds{nMinerSleep})) return;
     }
 }
 
-void StakeBPSs(bool fStake, CWallet *pwallet, CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool, boost::thread_group*& stakeThread)
+void StakeBPSs(bool fStake, CWallet *pwallet, CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool, std::thread& stakeThread)
 {
-    if (stakeThread != nullptr)
+    // Always stop the existing thread first, and actually wait for it. The staker holds
+    // a raw pointer to the wallet, so it has to be gone before the caller can destroy
+    // the wallet or start a second one.
+    if (stakeThread.joinable())
     {
-        stakeThread->interrupt_all();
-        delete stakeThread;
-        stakeThread = nullptr;
+        pwallet->m_stop_staking = true;
+        stakeThread.join();
     }
 
     if(fStake)
     {
-        stakeThread = new boost::thread_group();
-        stakeThread->create_thread(boost::bind(&ThreadStakeMiner, pwallet, connman, chainman, mempool));
+        pwallet->m_stop_staking = false;
+        stakeThread = std::thread(&ThreadStakeMiner, pwallet, connman, chainman, mempool);
     }
 }
 #endif

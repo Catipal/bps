@@ -5288,7 +5288,7 @@ ScriptPubKeyMan* CWallet::AddWalletDescriptor(WalletDescriptor& desc, const Flat
 
 void CWallet::StakeBPSs(bool fStake, CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool)
 {
-    ::StakeBPSs(fStake, this, connman, chainman, mempool, stakeThread);
+    ::StakeBPSs(fStake, this, connman, chainman, mempool, m_stake_thread);
 }
 
 void CWallet::StartStake(CConnman* connman, ChainstateManager* chainman, CTxMemPool* mempool)
@@ -5300,10 +5300,12 @@ void CWallet::StartStake(CConnman* connman, ChainstateManager* chainman, CTxMemP
 void CWallet::StopStake()
 {
     m_enabled_staking = false;
-    if(stakeThread)
+    if (m_stake_thread.joinable())
     {
-        LOCK(cs_wallet);
-        StakeBPSs(false, 0, 0, 0);
+        // Deliberately not holding cs_wallet: the staker takes it (both here in
+        // ThreadStakeMiner and inside CreateCoinStake), so joining while we held it
+        // would deadlock. StakeBPSs sets the stop flag and joins.
+        AssertLockNotHeld(cs_wallet);
+        StakeBPSs(false, nullptr, nullptr, nullptr);
     }
-    stakeThread = 0;
 }
