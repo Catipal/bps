@@ -445,6 +445,49 @@ static RPCHelpMan getmininginfo()
     };
 }
 
+#ifdef ENABLE_WALLET
+static UniValue setstaking(const JSONRPCRequest& request)
+{
+            RPCHelpMan{"setstaking",
+                "\nStart or stop staking with this wallet.\n"
+                "\nStaking could previously only be controlled with the -staking startup option or the\n"
+                "GUI checkbox, so it could not be scripted or changed without restarting the node.\n",
+                {
+                    {"staking", RPCArg::Type::BOOL, RPCArg::Optional::NO, "true to start staking, false to stop"},
+                },
+                RPCResult{
+                    RPCResult::Type::BOOL, "staking", "whether the wallet is staking after this call"
+                },
+                RPCExamples{
+                    HelpExampleCli("setstaking", "true")
+            + HelpExampleRpc("setstaking", "false")
+                },
+            }.Check(request);
+
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    const bool enable{request.params[0].get_bool()};
+
+    if (enable) {
+        if (pwallet->IsLocked()) {
+            throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED,
+                "Error: the wallet is locked, so it holds no keys that can sign a coinstake. "
+                "Unlock it, or keep the staking keys in a separate unencrypted wallet.");
+        }
+        // StartStake is a no-op if the thread is already running; StakeBPSs joins any
+        // previous one before starting, so this cannot leave two stakers behind.
+        pwallet->StartStake();
+    } else {
+        // Blocks until the staking thread has actually exited.
+        pwallet->StopStake();
+    }
+
+    return pwallet->m_enabled_staking.load();
+}
+#endif
+
 static UniValue getstakinginfo(const JSONRPCRequest& request)
 {
             RPCHelpMan{"getstakinginfo",
@@ -1364,6 +1407,9 @@ static const CRPCCommand commands[] =
     { "mining",             "submitheader",           &submitheader,           {"hexdata"} },
 
     { "mining",             "getstakinginfo",         &getstakinginfo,         {} },
+#ifdef ENABLE_WALLET
+    { "mining",             "setstaking",             &setstaking,             {"staking"} },
+#endif
     { "mining",             "getstakingstatus",       &getstakingstatus,       {} },
 
     { "generating",         "generatetoaddress",      &generatetoaddress,      {"nblocks","address","maxtries"} },
