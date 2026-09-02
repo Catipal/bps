@@ -49,6 +49,12 @@ WITNESS_SCALE_FACTOR = 4
 MAX_BLOCK_SIGOPS = 20000
 MAX_BLOCK_SIGOPS_WEIGHT = MAX_BLOCK_SIGOPS * WITNESS_SCALE_FACTOR
 
+# Confirmations before a coinbase can be spent, and before any coin can stake.
+# Bitcoin uses 100; this chain uses 500 (src/consensus/consensus.h). Inherited tests
+# that mine "101 blocks to spend" are written against the Bitcoin value and will hit
+# insufficient funds here - use this constant instead of a literal.
+COINBASE_MATURITY = 500
+
 # Genesis block time (regtest)
 TIME_GENESIS_BLOCK = 1296688602
 

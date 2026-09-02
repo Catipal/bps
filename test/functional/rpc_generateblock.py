@@ -5,6 +5,7 @@
 '''Test generateblock rpc.
 '''
 
+from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -37,7 +38,9 @@ class GenerateBlockTest(BitcoinTestFramework):
 
         self.log.info('Generate an empty block to a combo descriptor with compressed pubkey')
         combo_key = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
-        combo_address = 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080'
+        # Same BIP173 witness program as upstream (751e76e8...); this chain's regtest
+        # bech32 HRP is 'bpt', not 'bcrt'.
+        combo_address = 'bpt1qw508d6qejxtdg4y5r3zarvary0c5xw7kyfy05n'
         hash = node.generateblock('combo(' + combo_key + ')', [])['hash']
         block = node.getblock(hash, 2)
         assert_equal(len(block['tx']), 1)
@@ -45,14 +48,17 @@ class GenerateBlockTest(BitcoinTestFramework):
 
         self.log.info('Generate an empty block to a combo descriptor with uncompressed pubkey')
         combo_key = '0408ef68c46d20596cc3f6ddf7c8794f71913add807f1dc55949fa805d764d191c0b7ce6894c126fce0babc6663042f3dde9b0cf76467ea315514e5a6731149c67'
-        combo_address = 'mkc9STceoCcjoXEXe6cm66iJbmjM6zR9B2'
+        # Same hash160 (37d40315...); this chain's regtest PUBKEY_ADDRESS prefix is 65,
+        # not Bitcoin's 111.
+        combo_address = 'TF4Q9TuQ8uJSBapYWoJ6nLC7eZsxN9JNpA'
         hash = node.generateblock('combo(' + combo_key + ')', [])['hash']
         block = node.getblock(hash, 2)
         assert_equal(len(block['tx']), 1)
         assert_equal(block['tx'][0]['vout'][0]['scriptPubKey']['addresses'][0], combo_address)
 
-        # Generate 110 blocks to spend
-        node.generatetoaddress(110, address)
+        # Generate enough blocks to have something spendable. Upstream mines 110 for
+        # Bitcoin's COINBASE_MATURITY of 100; this chain uses 500.
+        node.generatetoaddress(COINBASE_MATURITY + 10, address)
 
         # Generate some extra mempool transactions to verify they don't get mined
         for _ in range(10):

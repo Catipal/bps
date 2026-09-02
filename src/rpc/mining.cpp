@@ -145,6 +145,9 @@ static bool getScriptFromDescriptor(const std::string& descriptor, CScript& scri
     }
 }
 
+// Defined below, after the RPC help boilerplate.
+static UniValue generateBlocks(ChainstateManager& chainman, const CTxMemPool& mempool, const CScript& coinbase_script, int nGenerate, uint64_t nMaxTries);
+
 static RPCHelpMan generatetodescriptor()
 {
     return RPCHelpMan{
@@ -165,7 +168,19 @@ static RPCHelpMan generatetodescriptor()
             "\nGenerate 11 blocks to mydesc\n" + HelpExampleCli("generatetodescriptor", "11 \"mydesc\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    return UniValue(UniValue::VARR);
+    const int num_blocks{request.params[0].get_int()};
+    const uint64_t max_tries{request.params[2].isNull() ? DEFAULT_MAX_TRIES : (uint64_t)request.params[2].get_int()};
+
+    CScript coinbase_script;
+    std::string error;
+    if (!getScriptFromDescriptor(request.params[1].get_str(), coinbase_script, error)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error);
+    }
+
+    const CTxMemPool& mempool = EnsureMemPool(request.context);
+    ChainstateManager& chainman = EnsureChainman(request.context);
+
+    return generateBlocks(chainman, mempool, coinbase_script, num_blocks, max_tries);
 },
     };
 }
@@ -180,6 +195,43 @@ static RPCHelpMan generate()
         throw JSONRPCError(RPC_METHOD_NOT_FOUND, self.ToString());
     }
     }};
+}
+
+/**
+ * Grind `block` until it satisfies proof-of-work, then submit it.
+ *
+ * Sets block_hash to the hash of the accepted block, or leaves it null if the nonce
+ * space was exhausted without a solution. Returns false only if we gave up (out of
+ * tries, or shutting down).
+ */
+static bool GenerateBlock(ChainstateManager& chainman, CBlock& block, uint64_t& max_tries, unsigned int& extra_nonce, uint256& block_hash)
+{
+    block_hash.SetNull();
+
+    {
+        LOCK(cs_main);
+        IncrementExtraNonce(&block, ::ChainActive().Tip(), extra_nonce);
+    }
+
+    while (max_tries > 0 && block.nNonce < std::numeric_limits<uint32_t>::max() &&
+           !CheckProofOfWork(block.GetHash(), block.nBits, Params().GetConsensus()) && !ShutdownRequested()) {
+        ++block.nNonce;
+        --max_tries;
+    }
+    if (max_tries == 0 || ShutdownRequested()) {
+        return false;
+    }
+    if (block.nNonce == std::numeric_limits<uint32_t>::max()) {
+        return true; // exhausted the nonce space; caller sees a null hash
+    }
+
+    std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
+    if (!chainman.ProcessNewBlock(Params(), shared_pblock, true, nullptr)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "ProcessNewBlock, block not accepted");
+    }
+
+    block_hash = block.GetHash();
+    return true;
 }
 
 /**
@@ -209,27 +261,16 @@ static UniValue generateBlocks(ChainstateManager& chainman, const CTxMemPool& me
             throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
         }
         CBlock *pblock = &pblocktemplate->block;
-        {
-            LOCK(cs_main);
-            IncrementExtraNonce(pblock, ::ChainActive().Tip(), nExtraNonce);
-        }
-        while (nMaxTries > 0 && pblock->nNonce < std::numeric_limits<uint32_t>::max() &&
-               !CheckProofOfWork(pblock->GetHash(), pblock->nBits, Params().GetConsensus()) && !ShutdownRequested()) {
-            ++pblock->nNonce;
-            --nMaxTries;
-        }
-        if (nMaxTries == 0 || ShutdownRequested()) {
+
+        uint256 block_hash;
+        if (!GenerateBlock(chainman, *pblock, nMaxTries, nExtraNonce, block_hash)) {
             break;
         }
-        if (pblock->nNonce == std::numeric_limits<uint32_t>::max()) {
+        if (block_hash.IsNull()) {
             continue;
         }
-        std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
-        if (!chainman.ProcessNewBlock(Params(), shared_pblock, true, nullptr)) {
-            throw JSONRPCError(RPC_INTERNAL_ERROR, "ProcessNewBlock, block not accepted");
-        }
         ++nHeight;
-        blockHashes.push_back(pblock->GetHash().GetHex());
+        blockHashes.push_back(block_hash.GetHex());
     }
     return blockHashes;
 }
@@ -368,7 +409,16 @@ static RPCHelpMan generateblock()
         }
     }
 
+    // Previously this returned an uninitialised block_hash without ever mining or
+    // submitting the block, so callers were handed an all-zeros hash that looked
+    // like success for a block that was never created.
     uint256 block_hash;
+    uint64_t max_tries{DEFAULT_MAX_TRIES};
+    unsigned int extra_nonce{0};
+
+    if (!GenerateBlock(EnsureChainman(request.context), block, max_tries, extra_nonce, block_hash) || block_hash.IsNull()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Failed to make block.");
+    }
 
     UniValue obj(UniValue::VOBJ);
     obj.pushKV("hash", block_hash.GetHex());

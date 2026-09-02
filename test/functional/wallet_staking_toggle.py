@@ -69,9 +69,12 @@ class StakingToggleTest(BitcoinTestFramework):
 
         self.log.info("setstaking(true) starts it")
         assert_equal(w.setstaking(True), True)
-        # m_last_coin_stake_search_interval only becomes non-zero once the thread has
-        # actually run a search, so this waits for the thread to really be alive.
-        self.wait_until(lambda: w.getstakinginfo()["staking"], timeout=120)
+        assert_equal(w.getstakingstatus()["walletstakingenabled"], True)
+        # Deliberately not waiting on getstakinginfo()["staking"]. That is
+        # search_interval && weight, and search_interval is i - m_last_coin_stake_search_time,
+        # which is zero until the search loop advances - up to a whole nMinerSleep
+        # period later. Waiting on it makes the test timing-dependent without telling
+        # us anything about the toggle, which is what this test is for.
 
         self.log.info("setstaking(false) stops it, and blocks until the thread is gone")
         # setstaking(false) calls StopStake(), which joins. If the stop flag were
@@ -82,7 +85,7 @@ class StakingToggleTest(BitcoinTestFramework):
 
         self.log.info("It can be started again - the old thread was joined, not leaked")
         assert_equal(w.setstaking(True), True)
-        self.wait_until(lambda: w.getstakinginfo()["staking"], timeout=120)
+        assert_equal(w.getstakingstatus()["walletstakingenabled"], True)
 
         self.log.info("Toggle repeatedly to shake out a leaked or double-started thread")
         for _ in range(5):
