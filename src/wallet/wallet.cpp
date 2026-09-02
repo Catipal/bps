@@ -4882,9 +4882,23 @@ int CWalletTx::GetBlocksToMaturity() const
 {
     if (!(IsCoinBase() || IsCoinStake()))
         return 0;
-    int chain_depth = GetDepthInMainChain();
-    //BPSTODO Some wallets are still not abandoning coinstakes correctly
-    //assert(chain_depth >= 0); // coinbase tx should not be conflicted
+    const int chain_depth = GetDepthInMainChain();
+
+    // Upstream asserts chain_depth >= 0 here, on the grounds that a coinbase cannot be
+    // conflicted. That does not hold on a proof-of-stake chain: losing a stake race
+    // orphans our coinstake, which is routine, and leaves it conflicted with a negative
+    // depth. The assert was commented out with a TODO suggesting the wallet was failing
+    // to abandon those coinstakes; as far as I can tell it is not a wallet bug, just an
+    // assumption that does not survive the fork. Restoring the assert would crash nodes
+    // on an ordinary event.
+    //
+    // A conflicted coinstake is never going to mature, and is already excluded from both
+    // spending (AvailableCoins skips nDepth < 0) and the immature balance
+    // (GetImmatureCredit requires IsInMainChain(), i.e. depth > 0). Say so plainly rather
+    // than returning a large number from the arithmetic below and relying on those
+    // guards to hide it.
+    if (chain_depth < 0) return 0;
+
     return std::max(0, (COINBASE_MATURITY+1) - chain_depth);
 }
 
