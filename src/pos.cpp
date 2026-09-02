@@ -17,6 +17,7 @@
 #include <script/sign.h>
 #include <script/standard.h>
 #include <consensus/consensus.h>
+#include <sync.h>
 
 using namespace std;
 
@@ -295,7 +296,12 @@ struct ScriptsElement{
  * Cache of the recent mpos scripts for the block reward recipients
  * The max size of the map is 2 * nCacheScripts - nMPoSRewardRecipients, so in this case it is 20
  */
-std::map<int, ScriptsElement> scriptsMap;
+//! Guards scriptsMap. It is reached from the staking thread via CreateMPoSOutputs()
+//! and from validation via CheckReward(), so it needs one. MPoS itself is over on
+//! mainnet - it ran until nLastMPoSBlock, which is the cold stake activation height -
+//! but the code is still compiled and reachable.
+static Mutex g_scripts_map_mutex;
+std::map<int, ScriptsElement> scriptsMap GUARDED_BY(g_scripts_map_mutex);
 
 unsigned int GetStakeMaxCombineInputs() { return 40; }
 
@@ -313,8 +319,11 @@ bool NeedToEraseScriptFromCache(int nBlockHeight, int nCacheScripts, int nScript
         return true;
 
     // Erase element from cache if hash different
-    CBlockIndex* pblockindex = ::ChainActive()[nScriptHeight];
-    if(pblockindex && pblockindex->GetBlockHash() != scriptElement.hash)
+    const uint256 block_hash = WITH_LOCK(cs_main, {
+        CBlockIndex* pblockindex = ::ChainActive()[nScriptHeight];
+        return pblockindex ? pblockindex->GetBlockHash() : uint256();
+    });
+    if(!block_hash.IsNull() && block_hash != scriptElement.hash)
         return true;
 
     return false;
@@ -322,6 +331,7 @@ bool NeedToEraseScriptFromCache(int nBlockHeight, int nCacheScripts, int nScript
 
 void CleanScriptCache(int nHeight, const Consensus::Params& consensusParams)
 {
+    AssertLockHeld(g_scripts_map_mutex);
     int nCacheScripts = consensusParams.nMPoSRewardRecipients * 1.5;
 
     // Remove the scripts from cache that are not used
@@ -338,6 +348,7 @@ void CleanScriptCache(int nHeight, const Consensus::Params& consensusParams)
 
 bool ReadFromScriptCache(CScript &script, CBlockIndex* pblockindex, int nHeight, const Consensus::Params& consensusParams)
 {
+    LOCK(g_scripts_map_mutex);
     CleanScriptCache(nHeight, consensusParams);
 
     // Find the script in the cache
@@ -356,6 +367,7 @@ bool ReadFromScriptCache(CScript &script, CBlockIndex* pblockindex, int nHeight,
 
 void AddToScriptCache(CScript script, CBlockIndex* pblockindex, int nHeight, const Consensus::Params& consensusParams)
 {
+    LOCK(g_scripts_map_mutex);
     CleanScriptCache(nHeight, consensusParams);
 
     // Add the script into the cache
@@ -368,7 +380,7 @@ void AddToScriptCache(CScript script, CBlockIndex* pblockindex, int nHeight, con
 bool AddMPoSScript(std::vector<CScript> &mposScriptList, int nHeight, const Consensus::Params& consensusParams)
 {
     // Check if the block index exist into the active chain
-    CBlockIndex* pblockindex = ::ChainActive()[nHeight];
+    CBlockIndex* pblockindex = WITH_LOCK(cs_main, return ::ChainActive()[nHeight]);
     if(!pblockindex)
     {
         LogPrint(BCLog::COINSTAKE, "Block index not found\n");

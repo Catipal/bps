@@ -518,7 +518,7 @@ bool CheckStake(const std::shared_ptr<const CBlock> pblock, CWallet& wallet, Cha
 
     // Found a solution
     {
-        if (pblock->hashPrevBlock != ::ChainActive().Tip()->GetBlockHash())
+        if (pblock->hashPrevBlock != WITH_LOCK(cs_main, return ::ChainActive().Tip()->GetBlockHash()))
             return error("CheckStake() : generated block is stale");
 
         for(const CTxIn& vin : pblock->vtx[1]->vin) {
@@ -582,7 +582,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
             if (!StakerSleep(*pwallet, std::chrono::milliseconds{10000})) return;
         }
         // Check if the last PoW block has been mined yet
-        if (::ChainActive().Tip()->nHeight < Params().GetConsensus().nLastPOWBlock) {
+        if (WITH_LOCK(cs_main, return ::ChainActive().Tip()->nHeight) < Params().GetConsensus().nLastPOWBlock) {
             if (!StakerSleep(*pwallet, std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing * 1000})) return; // sleep one block
             continue;
         }
@@ -595,10 +595,17 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
             }
             if (fTryToSync) {
                 fTryToSync = false;
-                if (connman->GetNodeCount(CConnman::CONNECTIONS_ALL) < 4 ||
-                    ::ChainActive().Tip()->GetBlockTime() < GetTime() - Params().GetConsensus().nPowTargetSpacing ||
-                    !::ChainActive().Tip()->HaveTxsDownloaded() ||
-                    !::ChainActive().Tip()->IsValid(BLOCK_VALID_TRANSACTIONS)) {
+                bool tip_is_current;
+                {
+                    // One snapshot: reading the tip three times unlocked could mix
+                    // values from before and after a reorg.
+                    LOCK(cs_main);
+                    const CBlockIndex* tip = ::ChainActive().Tip();
+                    tip_is_current = tip->GetBlockTime() >= GetTime() - Params().GetConsensus().nPowTargetSpacing &&
+                                     tip->HaveTxsDownloaded() &&
+                                     tip->IsValid(BLOCK_VALID_TRANSACTIONS);
+                }
+                if (connman->GetNodeCount(CConnman::CONNECTIONS_ALL) < 4 || !tip_is_current) {
                     if (!StakerSleep(*pwallet, std::chrono::milliseconds{Params().GetConsensus().nPowTargetSpacing / 10 * 1000})) return;
                     continue;
                 }
@@ -607,12 +614,15 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
         //
         // Select the suitable coins
         //
-        if (chainTipForCoins != ::ChainActive().Tip()->GetBlockHash()) {
+        // Read the tip once, so the hash we compare against is the same one we record.
+        // Taken before cs_wallet below, which is the required lock order.
+        const uint256 tip_for_coins = WITH_LOCK(cs_main, return ::ChainActive().Tip()->GetBlockHash());
+        if (chainTipForCoins != tip_for_coins) {
             int64_t start_time = GetTimeMillis();
             LogPrint(BCLog::COINSTAKE, "Chain tip changed since previous coin selection, selecting new coins for staking...\n");
             LOCK(pwallet->cs_wallet);
             setCoins.clear();
-            chainTipForCoins = ::ChainActive().Tip()->GetBlockHash();
+            chainTipForCoins = tip_for_coins;
             pwallet->SelectCoinsForStaking(setCoins);
             LogPrint(BCLog::COINSTAKE, "Selecting coins for staking completed in %15dms\n", GetTimeMillis() - start_time);
         } else {
@@ -632,7 +642,13 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                 return;
             }
 
-            CBlockIndex* pindexPrev = ::ChainActive().Tip();
+            const CBlockIndex* pindexPrev;
+            int64_t pindexPrevBlockTime;
+            {
+                LOCK(cs_main);
+                pindexPrev = ::ChainActive().Tip();
+                pindexPrevBlockTime = pindexPrev->GetBlockTime();
+            }
 
             uint32_t beginningTime=GetAdjustedTime();
             beginningTime &= ~STAKE_TIMESTAMP_MASK;
@@ -649,7 +665,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                     // increase priority so we can build the full PoS block ASAP to ensure the timestamp doesn't expire
                     SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL);
 
-                    if (::ChainActive().Tip()->GetBlockHash() != pblock->hashPrevBlock) {
+                    if (WITH_LOCK(cs_main, return ::ChainActive().Tip()->GetBlockHash()) != pblock->hashPrevBlock) {
                         //another block was received while building ours, scrap progress
                         LogPrintf("ThreadStakeMiner(): Valid future PoS block was orphaned before becoming valid\n");
                         break;
@@ -661,7 +677,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                         LogPrintf("ThreadStakeMiner(): Failed to create block template; thread exiting...\n");
                         return;
                     }
-                    if (::ChainActive().Tip()->GetBlockHash() != pblock->hashPrevBlock) {
+                    if (WITH_LOCK(cs_main, return ::ChainActive().Tip()->GetBlockHash()) != pblock->hashPrevBlock) {
                         //another block was received while building ours, scrap progress
                         LogPrintf("ThreadStakeMiner(): Valid future PoS block was orphaned before becoming valid\n");
                         break;
@@ -673,14 +689,16 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                         // CheckStake also does CheckBlock and AcceptBlock to propogate it to the network
                         bool validBlock = false;
                         while (!validBlock && !pwallet->m_stop_staking) {
-                            if (::ChainActive().Tip()->GetBlockHash() != pblockfilled->hashPrevBlock) {
+                            if (WITH_LOCK(cs_main, return ::ChainActive().Tip()->GetBlockHash()) != pblockfilled->hashPrevBlock) {
                                 //another block was received while building ours, scrap progress
                                 LogPrintf("ThreadStakeMiner(): Valid future PoS block was orphaned before becoming valid\n");
                                 break;
                             }
                             //check timestamps
-                            if (pblockfilled->GetBlockTime() <= pindexPrev->GetBlockTime() ||
-                                FutureDrift(pblockfilled->GetBlockTime()) < pindexPrev->GetBlockTime()) {
+                            // Use the time captured alongside the tip pointer rather than
+                            // dereferencing it here without cs_main.
+                            if (pblockfilled->GetBlockTime() <= pindexPrevBlockTime ||
+                                FutureDrift(pblockfilled->GetBlockTime()) < pindexPrevBlockTime) {
                                 LogPrintf("ThreadStakeMiner(): Valid PoS block took too long to create and has expired\n");
                                 break; //timestamp too late, so ignore
                             }
