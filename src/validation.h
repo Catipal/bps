@@ -310,7 +310,7 @@ bool CheckCanonicalBlockSignature(const CBlockHeader* pblock);
 
 #ifdef ENABLE_WALLET
 /* Sign a block */
-bool SignBlock(std::shared_ptr<CBlock> pblock, CWallet& wallet, const CAmount& nTotalFees, uint32_t nTime, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins);
+bool SignBlock(std::shared_ptr<CBlock> pblock, CWallet& wallet, const CAmount& nTotalFees, uint32_t nTime, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance);
 #endif
 
 /** Check a block is completely valid from start to finish (only works on top of our current best block) */

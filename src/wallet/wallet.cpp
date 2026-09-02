@@ -3486,7 +3486,7 @@ uint64_t CWallet::GetStakeWeight() const
     return nWeight;
 }
 
-bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins)
+bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance)
 {
     CBlockIndex* pindexPrev = ::ChainActive().Tip();
     arith_uint256 bnTargetPerCoinDay;
@@ -3501,8 +3501,8 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
     scriptEmpty.clear();
     txNew.vout.push_back(CTxOut(0, scriptEmpty));
 
-    // Choose coins to use
-    CAmount nBalance = GetBalance().m_mine_stakeable;
+    // Choose coins to use. Supplied by the caller: see the note on the declaration.
+    const CAmount nBalance = nStakeableBalance;
 
     std::vector<const CWalletTx*> vwtxPrev;
 

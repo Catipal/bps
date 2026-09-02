@@ -1024,7 +1024,12 @@ public:
     void CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::vector<std::pair<std::string, std::string>> orderForm);
 
     uint64_t GetStakeWeight() const;
-    bool CreateCoinStake(const CWallet &wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins);
+    //! nStakeableBalance is passed in rather than computed here. GetBalance() walks the
+    //! whole wallet with the stakeable figure uncached, and this runs once per candidate
+    //! timestamp under cs_wallet, which blocked wallet RPCs long enough to time out on a
+    //! node with many UTXOs. It only changes when the coin set does, so the staker
+    //! refreshes it alongside setCoins.
+    bool CreateCoinStake(const CWallet &wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance);
 
     bool DummySignTx(CMutableTransaction &txNew, const std::set<CTxOut> &txouts, bool use_max_sig = false) const
     {

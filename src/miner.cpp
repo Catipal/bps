@@ -573,6 +573,9 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
 
     std::set<std::pair<const CWalletTx*,unsigned int> > setCoins;
     uint256 chainTipForCoins;
+    // Refreshed with setCoins. Computing it per CreateCoinStake call meant a full
+    // uncached wallet scan under cs_wallet for every candidate timestamp.
+    CAmount stakeableBalance{0};
 
     while (!pwallet->m_stop_staking)
     {
@@ -624,6 +627,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
             setCoins.clear();
             chainTipForCoins = tip_for_coins;
             pwallet->SelectCoinsForStaking(setCoins);
+            stakeableBalance = pwallet->GetBalance().m_mine_stakeable;
             LogPrint(BCLog::COINSTAKE, "Selecting coins for staking completed in %15dms\n", GetTimeMillis() - start_time);
         } else {
             LogPrint(BCLog::COINSTAKE, "Chain tip unchanged since previous coin selection, using previously selected coins...\n");
@@ -661,7 +665,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                 // Try to sign a block (this also checks for a PoS stake)
                 pblocktemplate->block.nTime = i;
                 std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>(pblocktemplate->block);
-                if (SignBlock(pblock, *pwallet, nTotalFees, i, setCoins)) {
+                if (SignBlock(pblock, *pwallet, nTotalFees, i, setCoins, stakeableBalance)) {
                     // increase priority so we can build the full PoS block ASAP to ensure the timestamp doesn't expire
                     SetThreadPriority(THREAD_PRIORITY_ABOVE_NORMAL);
 
@@ -684,7 +688,7 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
                     }
                     // Sign the full block and use the timestamp from earlier for a valid stake
                     std::shared_ptr<CBlock> pblockfilled = std::make_shared<CBlock>(pblocktemplatefilled->block);
-                    if (SignBlock(pblockfilled, *pwallet, nTotalFees, i, setCoins)) {
+                    if (SignBlock(pblockfilled, *pwallet, nTotalFees, i, setCoins, stakeableBalance)) {
                         // Should always reach here unless we spent too much time processing transactions and the timestamp is now invalid
                         // CheckStake also does CheckBlock and AcceptBlock to propogate it to the network
                         bool validBlock = false;
