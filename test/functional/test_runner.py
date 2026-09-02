@@ -149,6 +149,7 @@ BASE_SCRIPTS = [
     'wallet_avoidreuse.py --descriptors',
     'wallet_coldstaking.py',
     'wallet_coldstaking_passwordless.py',
+    'wallet_coldstaking_compound.py',
     'mempool_reorg.py',
     'mempool_persist.py',
     'wallet_multiwallet.py',

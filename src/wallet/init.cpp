@@ -78,6 +78,10 @@ void WalletInit::AddWalletOptions(ArgsManager& argsman) const
     argsman.AddArg("-stakecache=<n>", "Enables or disables the staking cache; significantly improves staking performance, but can use a lot of memory. 0 = disabled, 1 = enabled (default: enabled)", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-emergencystaking=<n>", "Enable or disable emergecy staking. 0 = disabled, 1 = enabled (default: disabled)", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     argsman.AddArg("-aggressivestaking", "Check more often to publish immediately when valid block is found.", ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    argsman.AddArg("-coldstakefeestaker=<address>", "Pay the cold staker fee into a delegation staked by the key for <address>, owned by whoever owns the coin being staked. "
+        "This lets the fee keep staking instead of sitting idle, so the full reward compounds without ever unlocking the owner's wallet. "
+        "May be given more than once; the first address that is not the one currently staking is used, so supply two and they alternate. "
+        "The key must be in this wallet. The owner is always taken from the coin being staked, never from this option.", ArgsManager::ALLOW_STRING, OptionsCategory::WALLET);
     argsman.AddArg("-coldstakefeetoowner=<n>", strprintf("When staking a delegation, pay the cold staker fee to the delegation's owner instead of to the staking key. "
         "Use this when you are staking your own coins with a separate staking wallet, so the staking key - which may be kept unencrypted - never holds spendable funds. "
         "Leave disabled when staking on behalf of others, or you will give away your fee. 0 = disabled, 1 = enabled (default: %u)", DEFAULT_COLDSTAKE_FEE_TO_OWNER), ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);

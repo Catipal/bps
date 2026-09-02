@@ -3622,8 +3622,39 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 // separate from the encrypted wallet holding the owner keys.
                 uint160 ownerHash160(vSolutions[1]);
                 CKeyID ownerKeyHash(ownerHash160);
-                if (gArgs.GetBoolArg("-coldstakefeetoowner", DEFAULT_COLDSTAKE_FEE_TO_OWNER) || spk_man->HaveKey(ownerKeyHash))
+
+                // Best case: pay the fee into another delegation that we can stake
+                // ourselves, so it compounds without the owner's passphrase ever being
+                // needed. Consensus requires this script to differ from vout[1], so it
+                // uses a different staking key with the same owner.
+                //
+                // The owner key is always taken from the script we are staking, never
+                // from configuration, so a misconfigured -coldstakefeestaker can only
+                // cost us the ability to stake the fee - it can never send it to
+                // somebody else.
+                CScript feeDelegation;
+                for (const std::string& addr : gArgs.GetArgs("-coldstakefeestaker")) {
+                    CTxDestination dest = DecodeDestination(addr);
+                    const PKHash* fee_staker = boost::get<PKHash>(&dest);
+                    if (!fee_staker) continue;
+                    const CKeyID fee_staker_id = ToKeyID(*fee_staker);
+                    // Must differ from the kernel's staking key, or the fee output would
+                    // be identical to vout[1] and CheckReward could not tell them apart.
+                    if (fee_staker_id == pubKeyHash) continue;
+                    // Must be ours, or we could not stake the fee we just paid ourselves.
+                    if (!spk_man->HaveKey(fee_staker_id)) continue;
+                    feeDelegation = GetScriptForStakeDelegation(fee_staker_id, ownerKeyHash);
+                    break;
+                }
+
+                if (!feeDelegation.empty())
                 {
+                    coldStakerScriptPubKeyOut = feeDelegation;
+                }
+                else if (gArgs.GetBoolArg("-coldstakefeetoowner", DEFAULT_COLDSTAKE_FEE_TO_OWNER) || spk_man->HaveKey(ownerKeyHash))
+                {
+                    // Safe, but a plain output: the owner must sweep it back into a
+                    // delegation before it can stake again.
                     coldStakerScriptPubKeyOut = GetScriptForDestination(PKHash(ownerKeyHash));
                 }
                 else
