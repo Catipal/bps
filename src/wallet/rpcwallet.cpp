@@ -536,7 +536,11 @@ static RPCHelpMan sendtoaddress()
 
 UniValue CreateColdStakeDelegation(const UniValue& params, CWallet* const pwallet)
 {
-    LOCK2(cs_main, pwallet->cs_wallet);
+    // cs_wallet before cs_main. Taking them the other way round deadlocks against
+    // CWallet::Create, which holds cs_wallet across a rescan that reaches cs_main
+    // through interfaces::Chain. DEBUG_LOCKORDER flags it on any run that loads a
+    // wallet and then calls this RPC; a release build reports nothing at all.
+    LOCK2(pwallet->cs_wallet, cs_main);
 
     if (pwallet->GetLastBlockHeight() < Params().GetConsensus().BPSColdStakeEnableHeight) {
         throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Cold Staking is enabled at block %d\n", Params().GetConsensus().BPSColdStakeEnableHeight));
@@ -761,7 +765,8 @@ static RPCHelpMan listunspentdelegations()
 
     UniValue results(UniValue::VARR);
     {
-        LOCK2(cs_main, pwallet->cs_wallet);
+        // cs_wallet before cs_main -- see CreateColdStakeDelegation above.
+        LOCK2(pwallet->cs_wallet, cs_main);
 
         for (std::map<uint256, CWalletTx>::const_iterator it =
                 pwallet->mapWallet.begin(); it != pwallet->mapWallet.end(); ++it) {

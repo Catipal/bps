@@ -450,17 +450,7 @@ static RPCHelpMan getmininginfo()
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    LOCK(cs_main);
-    const CTxMemPool& mempool = EnsureMemPool(request.context);
-
-    UniValue obj(UniValue::VOBJ);
-    UniValue diff(UniValue::VOBJ);
-    UniValue weight(UniValue::VOBJ);
-
-    obj.pushKV("blocks",           (int)::ChainActive().Height());
-    if (BlockAssembler::m_last_block_weight) obj.pushKV("currentblockweight", *BlockAssembler::m_last_block_weight);
-    if (BlockAssembler::m_last_block_num_txs) obj.pushKV("currentblocktx", *BlockAssembler::m_last_block_num_txs);
-
+    // cs_wallet taken and released before cs_main -- see getstakinginfo below.
     uint64_t nWeight = 0;
     uint64_t lastCoinStakeSearchInterval = 0;
 #ifdef ENABLE_WALLET
@@ -473,6 +463,17 @@ static RPCHelpMan getmininginfo()
         lastCoinStakeSearchInterval = pwallet->m_last_coin_stake_search_interval;
     }
 #endif
+
+    LOCK(cs_main);
+    const CTxMemPool& mempool = EnsureMemPool(request.context);
+
+    UniValue obj(UniValue::VOBJ);
+    UniValue diff(UniValue::VOBJ);
+    UniValue weight(UniValue::VOBJ);
+
+    obj.pushKV("blocks",           (int)::ChainActive().Height());
+    if (BlockAssembler::m_last_block_weight) obj.pushKV("currentblockweight", *BlockAssembler::m_last_block_weight);
+    if (BlockAssembler::m_last_block_num_txs) obj.pushKV("currentblocktx", *BlockAssembler::m_last_block_num_txs);
     diff.pushKV("proof-of-work",   (double)GetDifficulty(GetLastBlockIndex(::ChainActive().Tip(), false)));
     diff.pushKV("proof-of-stake",  (double)GetDifficulty(GetLastBlockIndex(::ChainActive().Tip(), true)));
     diff.pushKV("search-interval", (int)lastCoinStakeSearchInterval);
@@ -563,9 +564,10 @@ static UniValue getstakinginfo(const JSONRPCRequest& request)
                 },
             }.Check(request);
 
-    LOCK(cs_main);
-    const CTxMemPool& mempool = EnsureMemPool(request.context);
-
+    // The wallet figures are read first, and cs_wallet released, before cs_main is
+    // taken. Nothing here needs both at once, and nesting them the other way round
+    // (cs_main outside cs_wallet, as this did) is the order that deadlocks against
+    // CWallet::Create -- see the note in SignBlock.
     uint64_t nWeight = 0;
     uint64_t lastCoinStakeSearchInterval = 0;
 #ifdef ENABLE_WALLET
@@ -579,6 +581,9 @@ static UniValue getstakinginfo(const JSONRPCRequest& request)
         lastCoinStakeSearchInterval = pwallet->m_enabled_staking ? pwallet->m_last_coin_stake_search_interval : 0;
     }
 #endif
+
+    LOCK(cs_main);
+    const CTxMemPool& mempool = EnsureMemPool(request.context);
 
     uint64_t nNetworkWeight = GetPoSKernelPS();
     bool staking = lastCoinStakeSearchInterval && nWeight;
@@ -631,12 +636,7 @@ static UniValue getstakingstatus(const JSONRPCRequest& request)
                 },
             }.Check(request);
 
-    LOCK(cs_main);
-
-    NodeContext& node = EnsureNodeContext(request.context);
-    if(!node.connman)
-        throw JSONRPCError(RPC_CLIENT_P2P_DISABLED, "Error: Peer-to-peer functionality missing or disabled");
-
+    // cs_wallet taken and released before cs_main -- see getstakinginfo above.
     uint64_t nWeight = 0;
     uint64_t lastCoinStakeSearchInterval = 0;
     bool isUnlocked = false;
@@ -654,6 +654,12 @@ static UniValue getstakingstatus(const JSONRPCRequest& request)
         walletStakingEnabled = pwallet->m_enabled_staking;
     }
 #endif
+
+    LOCK(cs_main);
+
+    NodeContext& node = EnsureNodeContext(request.context);
+    if(!node.connman)
+        throw JSONRPCError(RPC_CLIENT_P2P_DISABLED, "Error: Peer-to-peer functionality missing or disabled");
 
     bool staking = walletStakingEnabled && lastCoinStakeSearchInterval && nWeight;
     bool hasConnections = node.connman->GetNodeCount(CConnman::CONNECTIONS_ALL) >= 4;
