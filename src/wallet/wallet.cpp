@@ -2506,6 +2506,24 @@ void CWallet::AvailableCoins(std::vector<COutput>& vCoins, bool fOnlySafe, const
     }
 }
 
+std::unique_ptr<SigningProvider> CWallet::GetPrivateKeyProvider(const CScript& script) const
+{
+    for (ScriptPubKeyMan* spk_man : GetAllScriptPubKeyMans()) {
+        if (spk_man->IsMine(script) == ISMINE_NO) continue;
+        if (auto provider = spk_man->GetPrivateKeyProvider(script)) return provider;
+    }
+    return nullptr;
+}
+
+bool CWallet::HaveKeyForKeyID(const CKeyID& keyid) const
+{
+    // Ask via a plain pay-to-pubkey-hash for the key, so this works for any key
+    // manager rather than only the legacy one.
+    const CScript script = GetScriptForDestination(PKHash(keyid));
+    const std::unique_ptr<SigningProvider> provider = GetPrivateKeyProvider(script);
+    return provider && provider->HaveKey(keyid);
+}
+
 bool CWallet::HaveColdStakeKeyFor(const CTxOut& txout) const
 {
     std::vector<valtype> solutions;
@@ -2513,9 +2531,7 @@ bool CWallet::HaveColdStakeKeyFor(const CTxOut& txout) const
         return false;
     }
     // vSolutions[0] is the staking key hash, vSolutions[1] the owner's.
-    const LegacyScriptPubKeyMan* spk_man = GetLegacyScriptPubKeyMan();
-    if (!spk_man) return false;
-    return spk_man->HaveKey(CKeyID(uint160(solutions[0])));
+    return HaveKeyForKeyID(CKeyID(uint160(solutions[0])));
 }
 
 void CWallet::AvailableCoinsForStaking(std::vector<COutput>& vCoins) const
@@ -3529,12 +3545,20 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
     CScript coldStakerScriptPubKeyOut;
     CScript aggregateScriptPubKeyHashKernel;
 
-    LegacyScriptPubKeyMan* spk_man = GetLegacyScriptPubKeyMan();
-    if (!spk_man)
-    {
-        LogPrint(BCLog::COINSTAKE, "CreateCoinStake : failed to get signing provider\n");
-        return false;
-    }
+    // Resolve a SigningProvider per script rather than demanding the legacy key
+    // manager. GetSolvingProvider() serves descriptor wallets too, so this no longer
+    // refuses to stake outright on one.
+    //
+    // Descriptor wallets can solo stake after this, but still cannot cold stake:
+    // DescriptorScriptPubKeyMan::IsMine only matches scripts its own descriptor
+    // generated, and there is no descriptor for a pay-to-cold-stake script, so a P2CS
+    // output is invisible to them. Adding one is a separate and much larger job.
+    // Must be the private-key provider: this both signs the coinstake and hands the
+    // kernel key back to SignBlock to sign the block header. GetSolvingProvider()
+    // withholds private keys on descriptor wallets, so it silently fails there.
+    const auto provider_for = [this](const CScript& script) {
+        return GetPrivateKeyProvider(script);
+    };
 
     for(const std::pair<const CWalletTx*,unsigned int> &pcoin : setCoins)
     {
@@ -3550,6 +3574,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
             std::vector<valtype> vSolutions;
             CScript scriptPubKeyOut;
             scriptPubKeyKernel = pcoin.first->tx->vout[pcoin.second].scriptPubKey;
+            const std::unique_ptr<SigningProvider> kernel_provider = provider_for(scriptPubKeyKernel);
             TxoutType whichType = Solver(scriptPubKeyKernel, vSolutions);
             if (whichType == TxoutType::NONSTANDARD)
             {
@@ -3567,11 +3592,20 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 // convert to pay to public key type
                 uint160 hash160(vSolutions[0]);
                 CKeyID pubKeyHash(hash160);
-                if (!spk_man->GetKey(pubKeyHash, key))
+                if (!kernel_provider || !kernel_provider->GetKey(pubKeyHash, key))
                 {
                     LogPrint(BCLog::COINSTAKE, "CreateCoinStake : failed to get key for kernel type=%s\n", GetTxnOutputType(whichType).c_str());
                     break;  // unable to find corresponding public key
                 }
+                // This conversion is required, not cosmetic: GetBlockPublicKey() recovers
+                // the block-signing key from vout[1], and can only do so if the pubkey is
+                // in the script. Paying to the P2PKH form instead makes the block
+                // unverifiable and it is rejected with bad-blk-signature.
+                //
+                // The consequence for descriptor wallets is that the reward lands on a
+                // script a pkh() descriptor does not track, so it stakes but cannot see
+                // what it earned. Making that visible needs a pk() descriptor covering the
+                // same key; see wallet_staking_descriptors.py.
                 scriptPubKeyOut << key.GetPubKey().getvch() << OP_CHECKSIG;
                 aggregateScriptPubKeyHashKernel = scriptPubKeyKernel;
             }
@@ -3581,7 +3615,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 CPubKey pubKey(vchPubKey);
                 uint160 hash160(Hash160(vchPubKey));
                 CKeyID pubKeyHash(hash160);
-                if (!spk_man->GetKey(pubKeyHash, key))
+                if (!kernel_provider || !kernel_provider->GetKey(pubKeyHash, key))
                 {
                     LogPrint(BCLog::COINSTAKE, "CreateCoinStake : failed to get key for kernel type=%s\n", GetTxnOutputType(whichType).c_str());
                     break;  // unable to find corresponding public key
@@ -3601,7 +3635,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 // get public key
                 uint160 hash160(vSolutions[0]);
                 CKeyID pubKeyHash(hash160);
-                if (!spk_man->GetKey(pubKeyHash, key))
+                if (!kernel_provider || !kernel_provider->GetKey(pubKeyHash, key))
                 {
                     LogPrint(BCLog::COINSTAKE, "CreateCoinStake : failed to get key for kernel type=%s\n", GetTxnOutputType(whichType).c_str());
                     break;  // unable to find corresponding public key
@@ -3642,7 +3676,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                     // be identical to vout[1] and CheckReward could not tell them apart.
                     if (fee_staker_id == pubKeyHash) continue;
                     // Must be ours, or we could not stake the fee we just paid ourselves.
-                    if (!spk_man->HaveKey(fee_staker_id)) continue;
+                    if (!HaveKeyForKeyID(fee_staker_id)) continue;
                     feeDelegation = GetScriptForStakeDelegation(fee_staker_id, ownerKeyHash);
                     break;
                 }
@@ -3651,7 +3685,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
                 {
                     coldStakerScriptPubKeyOut = feeDelegation;
                 }
-                else if (gArgs.GetBoolArg("-coldstakefeetoowner", DEFAULT_COLDSTAKE_FEE_TO_OWNER) || spk_man->HaveKey(ownerKeyHash))
+                else if (gArgs.GetBoolArg("-coldstakefeetoowner", DEFAULT_COLDSTAKE_FEE_TO_OWNER) || HaveKeyForKeyID(ownerKeyHash))
                 {
                     // Safe, but a plain output: the owner must sweep it back into a
                     // delegation before it can stake again.
@@ -3784,7 +3818,11 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
     int nIn = 0;
     for(const CWalletTx* pcoin : vwtxPrev)
     {
-        if (!SignSignature(*spk_man, *pcoin->tx, txNew, nIn++, SIGHASH_ALL, true))
+        // Inputs may belong to different key managers, so resolve a provider for the
+        // script actually being spent rather than reusing one for all of them.
+        const CScript& prev_script = pcoin->tx->vout[txNew.vin[nIn].prevout.n].scriptPubKey;
+        const std::unique_ptr<SigningProvider> input_provider = provider_for(prev_script);
+        if (!input_provider || !SignSignature(*input_provider, *pcoin->tx, txNew, nIn++, SIGHASH_ALL, true))
             return error("CreateCoinStake : failed to sign coinstake");
     }
 

@@ -151,6 +151,7 @@ BASE_SCRIPTS = [
     'wallet_coldstaking_passwordless.py',
     'wallet_coldstaking_compound.py',
     'wallet_staking_toggle.py',
+    'wallet_staking_descriptors.py',
     'mempool_reorg.py',
     'mempool_persist.py',
     'wallet_multiwallet.py',

@@ -836,6 +836,14 @@ public:
      */
     bool HaveColdStakeKeyFor(const CTxOut& txout) const;
 
+    /** True if this wallet holds the private key for keyid, whichever key manager has it. */
+    bool HaveKeyForKeyID(const CKeyID& keyid) const;
+
+    /** A SigningProvider for script that carries private keys, from whichever key
+     *  manager owns the script. Unlike GetSolvingProvider this works for staking on a
+     *  descriptor wallet, which needs the actual key to sign the block header. */
+    std::unique_ptr<SigningProvider> GetPrivateKeyProvider(const CScript& script) const;
+
     /**
      * Return list of available coins and locked coins grouped by non-change output address.
      */

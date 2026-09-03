@@ -224,6 +224,16 @@ public:
 
     virtual std::unique_ptr<SigningProvider> GetSolvingProvider(const CScript& script) const { return nullptr; }
 
+    /** As GetSolvingProvider, but the returned provider also carries private keys.
+     *
+     *  The two differ for descriptor wallets, where GetSolvingProvider deliberately
+     *  withholds private material - it is meant for solving and size estimation. Legacy
+     *  wallets hand back the whole keystore either way, which is why code written
+     *  against legacy wallets can appear to work with the solving provider and then
+     *  fail on a descriptor wallet. Staking needs the real key: it signs the coinstake
+     *  and then the block header with it. Requires the wallet to be unlocked. */
+    virtual std::unique_ptr<SigningProvider> GetPrivateKeyProvider(const CScript& script) const { return nullptr; }
+
     /** Whether this ScriptPubKeyMan can provide a SigningProvider (via GetSolvingProvider) that, combined with
       * sigdata, can produce solving data.
       */
@@ -388,6 +398,7 @@ public:
     bool CanGetAddresses(bool internal = false) const override;
 
     std::unique_ptr<SigningProvider> GetSolvingProvider(const CScript& script) const override;
+    std::unique_ptr<SigningProvider> GetPrivateKeyProvider(const CScript& script) const override;
 
     bool CanProvide(const CScript& script, SignatureData& sigdata) override;
 
@@ -513,6 +524,29 @@ public:
     bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override { return m_spk_man.GetKeyOrigin(keyid, info); }
 };
 
+/** As LegacySigningProvider, but it will actually hand over private keys.
+ *
+ *  LegacySigningProvider deliberately returns false from GetKey and HaveKey - despite
+ *  the name it is for solving, not signing. Code that needs the key has always reached
+ *  past it and called LegacyScriptPubKeyMan directly, which works because that class is
+ *  itself a FillableSigningProvider. This wrapper makes the same thing available through
+ *  the SigningProvider interface, so callers can be written once for both wallet types.
+ */
+class LegacyPrivateKeyProvider : public SigningProvider
+{
+private:
+    const LegacyScriptPubKeyMan& m_spk_man;
+public:
+    LegacyPrivateKeyProvider(const LegacyScriptPubKeyMan& spk_man) : m_spk_man(spk_man) {}
+
+    bool GetCScript(const CScriptID &scriptid, CScript& script) const override { return m_spk_man.GetCScript(scriptid, script); }
+    bool HaveCScript(const CScriptID &scriptid) const override { return m_spk_man.HaveCScript(scriptid); }
+    bool GetPubKey(const CKeyID &address, CPubKey& pubkey) const override { return m_spk_man.GetPubKey(address, pubkey); }
+    bool GetKey(const CKeyID &address, CKey& key) const override { return m_spk_man.GetKey(address, key); }
+    bool HaveKey(const CKeyID &address) const override { return m_spk_man.HaveKey(address); }
+    bool GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const override { return m_spk_man.GetKeyOrigin(keyid, info); }
+};
+
 class DescriptorScriptPubKeyMan : public ScriptPubKeyMan
 {
 private:
@@ -593,6 +627,7 @@ public:
     bool CanGetAddresses(bool internal = false) const override;
 
     std::unique_ptr<SigningProvider> GetSolvingProvider(const CScript& script) const override;
+    std::unique_ptr<SigningProvider> GetPrivateKeyProvider(const CScript& script) const override;
 
     bool CanProvide(const CScript& script, SignatureData& sigdata) override;
 
