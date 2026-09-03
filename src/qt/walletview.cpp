@@ -313,21 +313,26 @@ void WalletView::changePassphrase()
     dlg.exec();
 }
 
-void WalletView::unlockWallet(bool fromMenu)
+// `forStaking` is true when the request came from the stake page's switch, false for
+// the Settings menu. (It was called fromMenu, which read as the exact opposite of what
+// the one caller passing true actually is.)
+void WalletView::unlockWallet(bool forStaking)
 {
     if(!walletModel)
         return;
     // Unlock wallet when requested by wallet model
     if (walletModel->getEncryptionStatus() == WalletModel::Locked)
     {
-        AskPassphraseDialog::Mode mode = fromMenu ?
+        AskPassphraseDialog::Mode mode = forStaking ?
             AskPassphraseDialog::UnlockStaking : AskPassphraseDialog::Unlock;
         AskPassphraseDialog dlg(mode, this);
         dlg.setModel(walletModel);
-        dlg.exec();
+        // The result was discarded, so a cancelled dialog was indistinguishable from a
+        // successful unlock and the stake page had no way to know which had happened.
+        const bool unlocked = (dlg.exec() == QDialog::Accepted);
 
         if (sender() == stakePage)
-            stakePage->updateEncryptionStatus();
+            stakePage->onUnlockFinished(unlocked);
     }
 }
 

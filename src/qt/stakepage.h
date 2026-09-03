@@ -41,13 +41,19 @@ public Q_SLOTS:
     void setBalance(const interfaces::WalletBalances& balances);
     void numBlocksChanged(int count, const QDateTime& blockDate, double nVerificationProgress, bool headers);
     void updateEncryptionStatus();
+    //! Called by WalletView once the passphrase dialog raised by the staking switch has
+    //! closed, with whether the wallet actually got unlocked.
+    void onUnlockFinished(bool unlocked);
 
 Q_SIGNALS:
-    void requireUnlock(bool fromMenu);
+    void requireUnlock(bool forStaking);
     void coinsSent(const uint256& txid);
     void message(const QString &title, const QString &message, unsigned int style);
 
 private:
+    //! Match the switch to the wallet's real staking state.
+    void syncStakingSwitch();
+
     Ui::StakePage *ui;
     ClientModel *clientModel;
     WalletModel *walletModel;

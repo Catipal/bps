@@ -28,6 +28,7 @@
 
 #include <QSortFilterProxyModel>
 #include <QDialog>
+#include <QSignalBlocker>
 
 Q_DECLARE_METATYPE(interfaces::WalletBalances)
 
@@ -158,10 +159,47 @@ void StakePage::on_checkStake_clicked(bool checked)
     if(!walletModel)
         return;
 
-    this->walletModel->wallet().setEnabledStaking(checked);
-
     if(checked && WalletModel::Locked == walletModel->getEncryptionStatus())
+    {
+        // Ask first, enable only once there is a key to stake with. This used to set
+        // the flag before prompting, so cancelling the passphrase dialog left an
+        // encrypted, locked wallet with staking switched on: the staker thread ran and
+        // could not sign anything. onUnlockFinished() picks it up from here.
         Q_EMIT requireUnlock(true);
+        return;
+    }
+
+    walletModel->wallet().setEnabledStaking(checked);
+    syncStakingSwitch();
+}
+
+void StakePage::onUnlockFinished(bool unlocked)
+{
+    if(!walletModel)
+        return;
+
+    if(unlocked)
+        walletModel->wallet().setEnabledStaking(true);
+
+    syncStakingSwitch();
+}
+
+void StakePage::syncStakingSwitch()
+{
+    if(!walletModel)
+        return;
+
+    // Drive the switch from what the wallet actually has, never the other way round.
+    // The old code called checkStake->onStatusChanged(), which is the *click* handler
+    // (`bool checked = !isChecked()`) -- it animated the switch to the opposite of
+    // wherever it happened to be and never touched m_enabled_staking, so after a
+    // cancelled unlock the widget and the wallet disagreed permanently.
+    const bool enabled = walletModel->wallet().getEnabledStaking();
+    if(ui->checkStake->isChecked() != enabled)
+    {
+        const QSignalBlocker blocker(ui->checkStake);
+        ui->checkStake->setChecked(enabled);
+    }
 }
 
 void StakePage::updateDisplayUnit()
@@ -208,17 +246,7 @@ void StakePage::updateAnnualROI()
 
 void StakePage::updateEncryptionStatus()
 {
-    if(!walletModel)
-        return;
-
-    int status = walletModel->getEncryptionStatus();
-    switch(status)
-    {
-    case WalletModel::Locked:
-        bool checked = ui->checkStake->isChecked();
-        if(checked) ui->checkStake->onStatusChanged();
-        break;
-    }
+    syncStakingSwitch();
 }
 
 void StakePage::on_newAddressButton_clicked()

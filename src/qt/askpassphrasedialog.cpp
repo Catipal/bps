@@ -95,8 +95,15 @@ AskPassphraseDialog::~AskPassphraseDialog()
 void AskPassphraseDialog::setModel(WalletModel *_model)
 {
     this->model = _model;
-    if  (model) 
-        ui->stakingCheckBox->setChecked(model->getWalletUnlockStakingOnly() || mode == UnlockStaking);
+    // Seed the box from the mode, not from the flag already on the wallet. It used to
+    // read `getWalletUnlockStakingOnly() || mode == UnlockStaking`, and for a plain
+    // Unlock the box is hidden -- so a wallet already unlocked for staking only carried
+    // that value forward invisibly and accept() wrote it straight back. Choosing
+    // "Unlock Wallet" from the menu, entering the right passphrase, and still not being
+    // able to spend was the visible symptom. walletpassphrase already got this right:
+    // it saves the flag and restores it if the unlock fails (rpcwallet.cpp).
+    if (model)
+        ui->stakingCheckBox->setChecked(mode == UnlockStaking);
 }
 
 void AskPassphraseDialog::accept()
