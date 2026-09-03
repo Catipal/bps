@@ -398,7 +398,9 @@ bool WalletModel::setWalletEncrypted(bool encrypted, const SecureString &passphr
     if (encrypted) {
         return m_wallet->encryptWallet(passphrase);
     }
-    return false;
+    // Used to be an unconditional `return false`, so the Decrypt dialog -- which is
+    // already wired up in WalletView -- could only ever report failure.
+    return m_wallet->decryptWallet(passphrase);
 }
 
 bool WalletModel::setWalletLocked(bool locked, const SecureString &passPhrase)

@@ -107,6 +107,10 @@ public:
     {
         return m_wallet->EncryptWallet(wallet_passphrase);
     }
+    bool decryptWallet(const SecureString& wallet_passphrase) override
+    {
+        return m_wallet->DecryptWallet(wallet_passphrase);
+    }
     bool isCrypted() override { return m_wallet->IsCrypted(); }
     bool lock() override { return m_wallet->Lock(); }
     bool unlock(const SecureString& wallet_passphrase) override { return m_wallet->Unlock(wallet_passphrase); }
@@ -495,6 +499,7 @@ public:
     void setEnabledStaking(bool enabled) override
     {
         m_wallet->m_enabled_staking = enabled;
+        m_wallet->SetStakingEnabledSetting(enabled);
     }
     bool getEnabledStaking() override
     {

@@ -534,6 +534,8 @@ static UniValue setstaking(const JSONRPCRequest& request)
         // Blocks until the staking thread has actually exited.
         pwallet->StopStake();
     }
+    // Remember it, so a restart comes back up the way the user left it.
+    pwallet->SetStakingEnabledSetting(enable);
 
     return pwallet->m_enabled_staking.load();
 }

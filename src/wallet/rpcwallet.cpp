@@ -2361,6 +2361,54 @@ static RPCHelpMan encryptwallet()
     };
 }
 
+static RPCHelpMan decryptwallet()
+{
+    return RPCHelpMan{"decryptwallet",
+                "\nRemoves the passphrase from an encrypted wallet, leaving the private keys stored in plaintext.\n"
+                "\nThe wallet file is rewritten and the encryption keys are destroyed, so this cannot be undone\n"
+                "without re-encrypting. Anyone who can read the wallet file afterwards can spend from it.\n"
+                "\nIntended for wallets that hold only a staking key, which must be usable without a passphrase.\n",
+                {
+                    {"passphrase", RPCArg::Type::STR, RPCArg::Optional::NO, "The current wallet passphrase."},
+                },
+                RPCResult{RPCResult::Type::STR, "", "A string with further instructions"},
+                RPCExamples{
+                    "\nRemove the passphrase from the wallet\n"
+                    + HelpExampleCli("decryptwallet", "\"my pass phrase\"") +
+                    "\nAs a JSON-RPC call\n"
+                    + HelpExampleRpc("decryptwallet", "\"my pass phrase\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    if (!pwallet->IsCrypted()) {
+        throw JSONRPCError(RPC_WALLET_WRONG_ENC_STATE, "Error: running with an unencrypted wallet, but decryptwallet was called.");
+    }
+
+    if (pwallet->IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        throw JSONRPCError(RPC_WALLET_ENCRYPTION_FAILED, "Error: decryptwallet is not supported for descriptor wallets.");
+    }
+
+    SecureString strWalletPass;
+    strWalletPass.reserve(100);
+    strWalletPass = request.params[0].get_str().c_str();
+
+    if (strWalletPass.empty()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "passphrase can not be empty");
+    }
+
+    if (!pwallet->DecryptWallet(strWalletPass)) {
+        throw JSONRPCError(RPC_WALLET_PASSPHRASE_INCORRECT, "Error: The wallet passphrase entered was incorrect.");
+    }
+
+    return "wallet decrypted; the private keys are now stored unencrypted. Anyone with the wallet file can spend your coins. Make a new backup.";
+},
+    };
+}
+
 static RPCHelpMan lockunspent()
 {
     return RPCHelpMan{"lockunspent",
@@ -4803,6 +4851,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "dumpprivkey",                      &dumpprivkey,                   {"address"}  },
     { "wallet",             "dumpwallet",                       &dumpwallet,                    {"filename"} },
     { "wallet",             "encryptwallet",                    &encryptwallet,                 {"passphrase"} },
+    { "wallet",             "decryptwallet",                    &decryptwallet,                 {"passphrase"} },
     { "wallet",             "getaddressesbylabel",              &getaddressesbylabel,           {"label"} },
     { "wallet",             "getaddressinfo",                   &getaddressinfo,                {"address"} },
     { "wallet",             "getbalance",                       &getbalance,                    {"dummy","minconf","include_watchonly","avoid_reuse"} },

@@ -42,6 +42,7 @@ const std::string MINVERSION{"minversion"};
 const std::string NAME{"name"};
 const std::string OLD_KEY{"wkey"};
 const std::string ORDERPOSNEXT{"orderposnext"};
+const std::string STAKINGENABLED{"stakingenabled"};
 const std::string POOL{"pool"};
 const std::string PURPOSE{"purpose"};
 const std::string SETTINGS{"settings"};
@@ -96,9 +97,11 @@ bool WalletBatch::WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubk
     return WriteIC(std::make_pair(DBKeys::KEYMETA, pubkey), meta, overwrite);
 }
 
-bool WalletBatch::WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata& keyMeta)
+bool WalletBatch::WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata& keyMeta, bool overwrite_metadata)
 {
-    if (!WriteKeyMetadata(keyMeta, vchPubKey, false)) {
+    // Decryption rewrites keys that already have a metadata record from when they were
+    // encrypted, and WriteIC refuses to replace one unless told to.
+    if (!WriteKeyMetadata(keyMeta, vchPubKey, overwrite_metadata)) {
         return false;
     }
 
@@ -137,9 +140,24 @@ bool WalletBatch::WriteCryptedKey(const CPubKey& vchPubKey,
     return true;
 }
 
+bool WalletBatch::WriteStakingEnabled(bool enabled)
+{
+    return WriteIC(DBKeys::STAKINGENABLED, enabled);
+}
+
 bool WalletBatch::WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey)
 {
     return WriteIC(std::make_pair(DBKeys::MASTER_KEY, nID), kMasterKey, true);
+}
+
+bool WalletBatch::EraseMasterKey(unsigned int nID)
+{
+    return EraseIC(std::make_pair(DBKeys::MASTER_KEY, nID));
+}
+
+bool WalletBatch::EraseCryptedKey(const CPubKey& vchPubKey)
+{
+    return EraseIC(std::make_pair(DBKeys::CRYPTED_KEY, vchPubKey));
 }
 
 bool WalletBatch::WriteCScript(const uint160& hash, const CScript& redeemScript)
@@ -537,6 +555,10 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
                 strErr = "Error reading wallet database: LegacyScriptPubKeyMan::LoadCScript failed";
                 return false;
             }
+        } else if (strType == DBKeys::STAKINGENABLED) {
+            bool enabled;
+            ssValue >> enabled;
+            pwallet->m_staking_enabled_setting = enabled;
         } else if (strType == DBKeys::ORDERPOSNEXT) {
             ssValue >> pwallet->nOrderPosNext;
         } else if (strType == DBKeys::DESTDATA) {

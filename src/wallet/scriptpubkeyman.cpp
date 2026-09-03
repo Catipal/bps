@@ -309,6 +309,50 @@ bool LegacyScriptPubKeyMan::Encrypt(const CKeyingMaterial& master_key, WalletBat
     return true;
 }
 
+bool LegacyScriptPubKeyMan::Decrypt(WalletBatch* batch)
+{
+    LOCK(cs_KeyStore);
+    if (mapCryptedKeys.empty()) {
+        return true;
+    }
+    // The master key has to still be in memory: this reads every private key back out
+    // through it before the caller drops it.
+    if (m_storage.IsLocked()) {
+        return false;
+    }
+
+    // Recover everything first and only then touch any state. If a single key fails to
+    // decrypt, the wallet is left exactly as it was rather than half converted.
+    KeyMap decrypted_keys;
+    for (const auto& mi : mapCryptedKeys) {
+        const CPubKey& vchPubKey = mi.second.first;
+        const std::vector<unsigned char>& vchCryptedSecret = mi.second.second;
+        CKey key;
+        if (!DecryptKey(m_storage.GetEncryptionKey(), vchCryptedSecret, vchPubKey, key)) {
+            return false;
+        }
+        decrypted_keys.emplace(mi.first, key);
+    }
+
+    for (const auto& mk : decrypted_keys) {
+        const CKey& key = mk.second;
+        const CPubKey vchPubKey = key.GetPubKey();
+        if (!batch->WriteKey(vchPubKey, key.GetPrivKey(), mapKeyMetadata[mk.first], /* overwrite_metadata= */ true)) {
+            return false;
+        }
+        if (!batch->EraseCryptedKey(vchPubKey)) {
+            return false;
+        }
+    }
+
+    // Only now is the in-memory view switched over. Note there is no separate "is
+    // encrypted" flag on the manager: it asks m_storage.HasEncryptionKeys(), so the
+    // wallet stops being encrypted when the caller clears mapMasterKeys, not here.
+    mapKeys = std::move(decrypted_keys);
+    mapCryptedKeys.clear();
+    return true;
+}
+
 bool LegacyScriptPubKeyMan::GetReservedDestination(const OutputType type, bool internal, CTxDestination& address, int64_t& index, CKeyPool& keypool)
 {
     LOCK(cs_KeyStore);

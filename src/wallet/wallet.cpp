@@ -617,6 +617,81 @@ void CWallet::AddToSpends(const uint256& wtxid)
         AddToSpends(txin.prevout, wtxid);
 }
 
+bool CWallet::DecryptWallet(const SecureString& strWalletPassphrase)
+{
+    if (!IsCrypted()) {
+        return false;
+    }
+    // Legacy only for now. A descriptor wallet keeps its keys in a different map
+    // (m_map_crypted_keys) written under different DB records, so it needs its own
+    // DescriptorScriptPubKeyMan::Decrypt rather than silently doing nothing here.
+    if (IsWalletFlagSet(WALLET_FLAG_DESCRIPTORS)) {
+        return false;
+    }
+
+    LOCK(cs_wallet);
+
+    // Doubles as the passphrase check, and leaves the master key in memory for the
+    // managers to read the private keys back out through.
+    if (!Unlock(strWalletPassphrase)) {
+        return false;
+    }
+
+    {
+        WalletBatch batch(*database);
+        if (!batch.TxnBegin()) {
+            return false;
+        }
+
+        // Unlike EncryptWallet, a failure here is recoverable and must not kill the
+        // node. ScriptPubKeyMan::Decrypt is required to leave the manager untouched
+        // unless it returns true -- the legacy one decrypts every key into a local map
+        // and only swaps it in once all of its writes have gone through. With the
+        // transaction aborted, both the file and memory are still the encrypted wallet
+        // the user started with, so reporting failure is enough.
+        // (This holds exactly because a legacy wallet has a single manager; a partial
+        // success across several would need a two-phase version of this loop, which is
+        // why descriptor wallets are refused above rather than half-handled.)
+        for (const auto& spk_man_pair : m_spk_managers) {
+            if (!spk_man_pair.second->Decrypt(&batch)) {
+                batch.TxnAbort();
+                return false;
+            }
+        }
+
+        for (const auto& mMaster : mapMasterKeys) {
+            if (!batch.EraseMasterKey(mMaster.first)) {
+                batch.TxnAbort();
+                return false;
+            }
+        }
+
+        if (!batch.TxnCommit()) {
+            // The managers have already swapped to plaintext in memory, but nothing
+            // reached the file. Here there is no way back, and this matches what
+            // EncryptWallet does with the same problem.
+            assert(false);
+        }
+    }
+
+    // HasEncryptionKeys() is !mapMasterKeys.empty(), so this is what actually makes the
+    // wallet unencrypted, both here and inside every ScriptPubKeyMan.
+    mapMasterKeys.clear();
+    nMasterKeyMaxID = 0;
+    vMasterKey.clear();
+    m_wallet_unlock_staking_only = false;
+
+    // The encrypted records are gone from the live database, but BDB leaves copies in
+    // slack space. They are useless without the master key, which is also gone -- the
+    // rewrite is for tidiness here, not secrecy. (EncryptWallet needs it for the
+    // opposite and much sharper reason: plaintext keys left in slack.)
+    database->Rewrite();
+    database->ReloadDbEnv();
+
+    NotifyStatusChanged(this);
+    return true;
+}
+
 bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
 {
     if (IsCrypted())
@@ -4922,8 +4997,11 @@ void CWallet::postInitProcess()
     // Update wallet transactions with current mempool transactions.
     chain().requestMempoolTransactions(*this);
 
-    // Start mine proof-of-stake blocks in the background
-    if (gArgs.GetBoolArg("-staking", DEFAULT_STAKE)) {
+    // Start mine proof-of-stake blocks in the background.
+    // -staking gates whether staking happens at all, so an explicit -staking=0 still
+    // wins; the per-wallet record then decides which wallets actually stake. A wallet
+    // with no record staked before this existed, so it keeps staking.
+    if (gArgs.GetBoolArg("-staking", DEFAULT_STAKE) && m_staking_enabled_setting.value_or(true)) {
         StartStake();
     }
 }
@@ -5388,6 +5466,15 @@ void CWallet::StartStake(CConnman* connman, ChainstateManager* chainman, CTxMemP
 {
     m_enabled_staking = true;
     StakeBPSs(true, connman, chainman, mempool);
+}
+
+void CWallet::SetStakingEnabledSetting(bool enabled)
+{
+    m_staking_enabled_setting = enabled;
+    if (!WalletBatch(*database).WriteStakingEnabled(enabled)) {
+        WalletLogPrintf("Failed to record staking=%s in the wallet; it will not survive a restart\n",
+                        enabled ? "true" : "false");
+    }
 }
 
 void CWallet::StopStake()

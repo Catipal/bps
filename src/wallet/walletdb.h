@@ -73,6 +73,7 @@ extern const std::string ORDERPOSNEXT;
 extern const std::string POOL;
 extern const std::string PURPOSE;
 extern const std::string SETTINGS;
+extern const std::string STAKINGENABLED;
 extern const std::string TX;
 extern const std::string VERSION;
 extern const std::string WALLETDESCRIPTOR;
@@ -222,9 +223,16 @@ public:
     bool EraseTx(uint256 hash);
 
     bool WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite);
-    bool WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata &keyMeta);
+    bool WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey, const CKeyMetadata &keyMeta, bool overwrite_metadata = false);
     bool WriteCryptedKey(const CPubKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret, const CKeyMetadata &keyMeta);
     bool WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey);
+    //! Remember whether this wallet was staking, so a restart resumes it. Per wallet,
+    //! not a global setting: a staking wallet and a spending wallet want different
+    //! answers, and -staking cannot express that.
+    bool WriteStakingEnabled(bool enabled);
+    //! Both needed to undo encryption; there was no way to remove either record.
+    bool EraseMasterKey(unsigned int nID);
+    bool EraseCryptedKey(const CPubKey& vchPubKey);
 
     bool WriteCScript(const uint160& hash, const CScript& redeemScript);
 

@@ -917,6 +917,11 @@ public:
     bool ChangeWalletPassphrase(const SecureString& strOldWalletPassphrase, const SecureString& strNewWalletPassphrase);
     bool EncryptWallet(const SecureString& strWalletPassphrase);
 
+    /** Remove encryption from the wallet, leaving the private keys in plaintext.
+     *  Legacy wallets only. Returns false if the wallet is not encrypted, is a
+     *  descriptor wallet, or the passphrase is wrong. */
+    bool DecryptWallet(const SecureString& strWalletPassphrase);
+
     void GetKeyBirthTimes(std::map<CKeyID, int64_t> &mapKeyBirth) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     unsigned int ComputeTimeSmart(const CWalletTx& wtx) const;
 
@@ -1096,6 +1101,18 @@ public:
     int64_t m_last_coin_stake_search_time{0};
     int64_t m_last_coin_stake_search_interval{0};
     std::atomic<bool> m_enabled_staking{false};
+
+    //! What the wallet file records about staking, so a restart resumes where the user
+    //! left off. nullopt means nothing was recorded, in which case -staking alone
+    //! decides -- which is exactly how wallets written before this record behave, so
+    //! upgrading one does not silently stop it staking.
+    //! Kept separate from m_enabled_staking because that one doubles as "a staking
+    //! thread is running right now" and is reported by getstakinginfo.
+    Optional<bool> m_staking_enabled_setting;
+
+    //! Record the user's staking choice in the wallet file. Not called at startup, only
+    //! when the user actually changes it.
+    void SetStakingEnabledSetting(bool enabled);
     //! Set to ask ThreadStakeMiner to return; it checks this while sleeping.
     std::atomic<bool> m_stop_staking{false};
 
