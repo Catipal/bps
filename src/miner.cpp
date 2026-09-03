@@ -623,11 +623,23 @@ void ThreadStakeMiner(CWallet *pwallet, CConnman* connman, ChainstateManager* ch
         if (chainTipForCoins != tip_for_coins) {
             int64_t start_time = GetTimeMillis();
             LogPrint(BCLog::COINSTAKE, "Chain tip changed since previous coin selection, selecting new coins for staking...\n");
-            LOCK(pwallet->cs_wallet);
-            setCoins.clear();
-            chainTipForCoins = tip_for_coins;
-            pwallet->SelectCoinsForStaking(setCoins);
-            stakeableBalance = pwallet->GetBalance().m_mine_stakeable;
+            {
+                // cs_wallet before cs_main: see the note in SignBlock. Re-read the tip
+                // under this lock so the coins and the hash we remember come from one
+                // snapshot -- tip_for_coins above was only a cheap "did it move?" test
+                // and may already be stale.
+                LOCK2(pwallet->cs_wallet, cs_main);
+                setCoins.clear();
+                chainTipForCoins = ::ChainActive().Tip()->GetBlockHash();
+                pwallet->SelectCoinsForStaking(setCoins);
+                stakeableBalance = pwallet->GetBalance().m_mine_stakeable;
+            }
+            // Once per tip change, not once per candidate timestamp, and with no lock
+            // held here: it batches its own so a long warm-up cannot stall the node.
+            if (!pwallet->WarmStakeCache(setCoins)) {
+                // Stopped mid warm-up; drop the tip so the next pass redoes it.
+                chainTipForCoins.SetNull();
+            }
             LogPrint(BCLog::COINSTAKE, "Selecting coins for staking completed in %15dms\n", GetTimeMillis() - start_time);
         } else {
             LogPrint(BCLog::COINSTAKE, "Chain tip unchanged since previous coin selection, using previously selected coins...\n");

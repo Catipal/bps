@@ -3502,8 +3502,60 @@ uint64_t CWallet::GetStakeWeight() const
     return nWeight;
 }
 
+bool CWallet::WarmStakeCache(const std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins)
+{
+    if (!gArgs.GetBoolArg("-stakecache", DEFAULT_STAKE_CACHE)) {
+        LOCK(cs_wallet);
+        stakeCache.clear();
+        return true;
+    }
+
+    {
+        LOCK(cs_wallet);
+        if (stakeCache.size() > setCoins.size() + 100) {
+            //Determining if the cache is still valid is harder than just clearing it when it gets too big, so instead just clear it
+            //when it has more than 100 entries more than the actual setCoins.
+            stakeCache.clear();
+        }
+    }
+
+    // Each miss costs ~2 UTXO-database reads, so a first warm-up on a large wallet is
+    // thousands of them. Take the locks in batches rather than across the whole scan:
+    // holding cs_main for that long would stall block validation and every RPC.
+    // cs_wallet before cs_main -- see the note in SignBlock.
+    //
+    // Releasing between batches is safe. A cache entry records facts about one coin
+    // (its amount and the time of the block it came from), not about the tip, and
+    // CheckKernel already re-verifies any cache hit against the live view before
+    // acting on it -- the same argument that makes the cache safe across reorgs.
+    constexpr size_t WARM_BATCH = 256;
+    auto it = setCoins.begin();
+    while (it != setCoins.end()) {
+        // Bail out promptly on shutdown rather than making it wait for the whole set.
+        // This is what the old boost interruption point was for, and it stopped working
+        // when the staker became a std::thread: nothing ever sets boost's interrupt
+        // flag on one, so the call was silently a no-op.
+        if (m_stop_staking) return false;
+
+        LOCK2(cs_wallet, cs_main);
+        CBlockIndex* pindexPrev = ::ChainActive().Tip();
+        if (!pindexPrev) return false;
+        for (size_t n = 0; n < WARM_BATCH && it != setCoins.end(); ++n, ++it) {
+            const COutPoint prevoutStake(it->first->GetHash(), it->second);
+            CacheKernel(stakeCache, prevoutStake, pindexPrev, ::ChainstateActive().CoinsTip()); //this will do a 2 disk loads per op
+        }
+    }
+    return true;
+}
+
 bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance)
 {
+    // Enforced at runtime too, not just by the annotation: this file builds under GCC,
+    // which ignores -Wthread-safety entirely, so the annotation alone catches nothing
+    // in the configuration this project actually ships.
+    AssertLockHeld(cs_main);
+    AssertLockHeld(cs_wallet);
+
     CBlockIndex* pindexPrev = ::ChainActive().Tip();
     arith_uint256 bnTargetPerCoinDay;
     bnTargetPerCoinDay.SetCompact(nBits);
@@ -3525,20 +3577,9 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
     if (setCoins.empty())
         return false;
 
-    if(stakeCache.size() > setCoins.size() + 100){
-        //Determining if the cache is still valid is harder than just clearing it when it gets too big, so instead just clear it
-        //when it has more than 100 entries more than the actual setCoins.
-        stakeCache.clear();
-    }
-    if(gArgs.GetBoolArg("-stakecache", DEFAULT_STAKE_CACHE)) {
-
-        for(const std::pair<const CWalletTx*,unsigned int> &pcoin : setCoins)
-        {
-            boost::this_thread::interruption_point();
-            COutPoint prevoutStake = COutPoint(pcoin.first->GetHash(), pcoin.second);
-            CacheKernel(stakeCache, prevoutStake, pindexPrev, ::ChainstateActive().CoinsTip()); //this will do a 2 disk loads per op
-        }
-    }
+    // The kernel cache is warmed by the staker once per tip change (WarmStakeCache).
+    // It used to be filled here, which meant ~2 UTXO-database reads per coin on every
+    // candidate timestamp, all of it under cs_wallet.
     int64_t nCredit = 0;
     bool isColdStake = false;
     CScript scriptPubKeyKernel;
@@ -3563,7 +3604,7 @@ bool CWallet::CreateCoinStake(const CWallet& wallet, unsigned int nBits, const C
     for(const std::pair<const CWalletTx*,unsigned int> &pcoin : setCoins)
     {
         bool fKernelFound = false;
-        boost::this_thread::interruption_point();
+        if (m_stop_staking) return false;
         // Search backward in time from the given txNew timestamp
         // Search nSearchInterval seconds back up to nMaxStakeSearchInterval
         COutPoint prevoutStake = COutPoint(pcoin.first->GetHash(), pcoin.second);

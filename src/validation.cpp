@@ -3758,7 +3758,17 @@ bool SignBlock(std::shared_ptr<CBlock> pblock, CWallet& wallet, const CAmount& n
     //original line:
     //int64_t nSearchInterval = IsProtocolV2(nBestHeight+1) ? 1 : nSearchTime - nLastCoinStakeSearchTime;
     //IsProtocolV2 mean POS 2 or higher, so the modified line is:
-    LOCK(wallet.cs_wallet);
+    // cs_main is required, not merely nice to have: CreateCoinStake reads
+    // ChainstateActive().CoinsTip() and ChainActive().Tip(), and so does the tip
+    // comparison below. It was taking cs_wallet alone, racing every reorg and cache
+    // flush.
+    //
+    // cs_wallet BEFORE cs_main, which is this tree's order despite the pre-0.19
+    // convention being the reverse. Since 0.21 the wallet never takes cs_main
+    // directly -- it calls interfaces::Chain, which takes cs_main inside short
+    // scopes -- so wallet load (CWallet::Create) records cs_wallet -> cs_main on
+    // every startup. Taking them the other way here deadlocks against it.
+    LOCK2(wallet.cs_wallet, cs_main);
     if (wallet.CreateCoinStake(wallet, pblock->nBits, nTotalFees, nTimeBlock, txCoinStake, key, setCoins, nStakeableBalance))
     {
         if (nTimeBlock >= ::ChainActive().Tip()->GetMedianTimePast()+1)

@@ -636,7 +636,10 @@ private:
     // Local time that the tip block was received. Used to schedule wallet rebroadcasts.
     std::atomic<int64_t> m_best_block_time {0};
 
-    std::map<COutPoint, CStakeCache> stakeCache;
+    //! Kernel cache for staking. Read and written only by the staker today, but wallet
+    //! RPCs contend for the same lock, so state the requirement rather than relying on
+    //! that staying true.
+    std::map<COutPoint, CStakeCache> stakeCache GUARDED_BY(cs_wallet);
 
     /**
      * Used to keep track of spent outpoints, and
@@ -1037,7 +1040,16 @@ public:
     //! timestamp under cs_wallet, which blocked wallet RPCs long enough to time out on a
     //! node with many UTXOs. It only changes when the coin set does, so the staker
     //! refreshes it alongside setCoins.
-    bool CreateCoinStake(const CWallet &wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance);
+    bool CreateCoinStake(const CWallet &wallet, unsigned int nBits, const CAmount& nTotalFees, uint32_t nTimeBlock, CMutableTransaction& tx, CKey& key, std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins, const CAmount& nStakeableBalance) EXCLUSIVE_LOCKS_REQUIRED(cs_main, cs_wallet);
+
+    //! Populate the kernel cache for setCoins. Each miss costs ~2 UTXO-database reads,
+    //! so this must not run per candidate timestamp; the staker calls it once per tip
+    //! change. Takes cs_wallet then cs_main itself (that order -- see SignBlock), in
+    //! batches, so neither is held
+    //! across the whole scan -- call it with neither held. Returns false if staking was
+    //! stopped partway through, in which case the cache is only partly filled (which is
+    //! merely slow, never wrong).
+    bool WarmStakeCache(const std::set<std::pair<const CWalletTx*,unsigned int> >& setCoins) LOCKS_EXCLUDED(cs_main, cs_wallet);
 
     bool DummySignTx(CMutableTransaction &txNew, const std::set<CTxOut> &txouts, bool use_max_sig = false) const
     {
