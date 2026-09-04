@@ -102,6 +102,10 @@ static ScriptErrorDesc script_errors[]={
     {SCRIPT_ERR_WITNESS_PUBKEYTYPE, "WITNESS_PUBKEYTYPE"},
     {SCRIPT_ERR_OP_CODESEPARATOR, "OP_CODESEPARATOR"},
     {SCRIPT_ERR_SIG_FINDANDDELETE, "SIG_FINDANDDELETE"},
+    // This chain's own, and it was missing: FormatScriptError() fell through to
+    // "Unknown scripterror enumeration value" for every OP_CHECKCOLDSTAKEVERIFY
+    // failure, so a cold-staking script test could not report why it failed.
+    {SCRIPT_ERR_CHECKCOLDSTAKEVERIFY, "CHECKCOLDSTAKEVERIFY"},
 };
 
 static std::string FormatScriptError(ScriptError_t err)

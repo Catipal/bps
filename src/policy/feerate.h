@@ -11,7 +11,12 @@
 
 #include <string>
 
-const std::string CURRENCY_UNIT = "BTC"; // One formatted unit
+// The ticker every RPC help string, fee message and -paytxfee warning is formatted
+// with. It was still "BTC" -- the GUI was rebranded (BitcoinUnits::longName returns
+// "BPS") but this was not, so the daemon and bitcoin-pos-cli quoted amounts in the
+// wrong currency everywhere. amount_tests/ToStringTest had been updated to expect
+// "BPS" and was failing against the code, not the other way round.
+const std::string CURRENCY_UNIT = "BPS"; // One formatted unit
 const std::string CURRENCY_ATOM = "sat"; // One indivisible minimum value unit
 
 /* Used to determine type of fee estimation requested */
