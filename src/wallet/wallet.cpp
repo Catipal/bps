@@ -3595,9 +3595,17 @@ bool CWallet::WarmStakeCache(const std::set<std::pair<const CWalletTx*,unsigned 
     }
 
     // Each miss costs ~2 UTXO-database reads, so a first warm-up on a large wallet is
-    // thousands of them. Take the locks in batches rather than across the whole scan:
-    // holding cs_main for that long would stall block validation and every RPC.
-    // cs_wallet before cs_main -- see the note in SignBlock.
+    // thousands of them. Two locks are involved and they need different treatment.
+    //
+    // cs_wallet is not held across the reads at all. Every wallet RPC wants it, and
+    // holding it through thousands of disk loads is what made getstakinginfo time out
+    // on a wallet with many UTXOs. The reads need the chain, not the wallet, so they
+    // run under cs_main alone and the results are handed to stakeCache afterwards in a
+    // critical section that touches no disk.
+    //
+    // cs_main cannot be avoided -- CoinsTip() requires it -- but it is taken in batches,
+    // so block validation is never blocked for more than a bounded stretch. The two are
+    // never held together here, so the ordering question does not arise.
     //
     // Releasing between batches is safe. A cache entry records facts about one coin
     // (its amount and the time of the block it came from), not about the tip, and
@@ -3612,12 +3620,35 @@ bool CWallet::WarmStakeCache(const std::set<std::pair<const CWalletTx*,unsigned 
         // flag on one, so the call was silently a no-op.
         if (m_stop_staking) return false;
 
-        LOCK2(cs_wallet, cs_main);
-        CBlockIndex* pindexPrev = ::ChainActive().Tip();
-        if (!pindexPrev) return false;
-        for (size_t n = 0; n < WARM_BATCH && it != setCoins.end(); ++n, ++it) {
-            const COutPoint prevoutStake(it->first->GetHash(), it->second);
-            CacheKernel(stakeCache, prevoutStake, pindexPrev, ::ChainstateActive().CoinsTip()); //this will do a 2 disk loads per op
+        // Which of the next batch are missing. Needs cs_wallet to read stakeCache, but
+        // does no I/O, so nothing can be waiting on a disk read behind this.
+        std::vector<COutPoint> missing;
+        {
+            LOCK(cs_wallet);
+            for (size_t n = 0; n < WARM_BATCH && it != setCoins.end(); ++n, ++it) {
+                const COutPoint prevoutStake(it->first->GetHash(), it->second);
+                if (stakeCache.find(prevoutStake) == stakeCache.end()) {
+                    missing.push_back(prevoutStake);
+                }
+            }
+        }
+        if (missing.empty()) continue;
+
+        // The expensive part, with cs_wallet released.
+        std::map<COutPoint, CStakeCache> fetched;
+        {
+            LOCK(cs_main);
+            CBlockIndex* pindexPrev = ::ChainActive().Tip();
+            if (!pindexPrev) return false;
+            for (const COutPoint& prevoutStake : missing) {
+                CacheKernel(fetched, prevoutStake, pindexPrev, ::ChainstateActive().CoinsTip()); //this will do a 2 disk loads per op
+            }
+        }
+
+        // Publish. No disk, no chain lock.
+        {
+            LOCK(cs_wallet);
+            stakeCache.insert(fetched.begin(), fetched.end());
         }
     }
     return true;
