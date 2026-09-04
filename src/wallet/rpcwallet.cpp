@@ -634,6 +634,149 @@ UniValue CreateColdStakeDelegation(const UniValue& params, CWallet* const pwalle
     return result;
 }
 
+static RPCHelpMan rotatestakingkey()
+{
+    return RPCHelpMan{"rotatestakingkey",
+                "\nMove every cold-staked coin in this wallet to a new staking key, in one transaction.\n"
+                "\nThis is the recovery path if a staking key is exposed. A staking key cannot spend the\n"
+                "coins it stakes -- OP_CHECKCOLDSTAKEVERIFY only lets it produce coinstakes that pay back\n"
+                "to the owner -- so a leaked one cannot steal anything, but it can keep using the owner's\n"
+                "stake weight to produce blocks and collect the staker fee. Re-delegating cuts it out.\n"
+                "\nOnly outputs whose owner key is in this wallet can be moved, because the owner key is\n"
+                "what signs the spend. Requires an unlocked wallet.\n",
+                {
+                    {"new_staker_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The staking address to delegate to instead."},
+                    {"owner_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Only rotate coins owned by this address. Defaults to all owners held here."},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::STR_HEX, "txid", "The transaction id"},
+                        {RPCResult::Type::STR, "new_staker_address", "The staking address now delegated to"},
+                        {RPCResult::Type::NUM, "outputs_rotated", "How many delegated outputs were moved"},
+                        {RPCResult::Type::STR_AMOUNT, "amount_rotated", "Total value moved, before fee"},
+                    }},
+                RPCExamples{
+                    HelpExampleCli("rotatestakingkey", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                    + HelpExampleRpc("rotatestakingkey", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    // cs_wallet before cs_main -- see CreateColdStakeDelegation above.
+    LOCK2(pwallet->cs_wallet, cs_main);
+
+    if (pwallet->GetLastBlockHeight() < Params().GetConsensus().BPSColdStakeEnableHeight) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Cold Staking is enabled at block %d\n", Params().GetConsensus().BPSColdStakeEnableHeight));
+    }
+
+    CTxDestination new_staker_dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(new_staker_dest))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BitcoinPoS address");
+    const PKHash* new_staker = boost::get<PKHash>(&new_staker_dest);
+    if (!new_staker)
+        throw JSONRPCError(RPC_WALLET_ERROR, "Unable to get stake pubkey hash from new_staker_address");
+    const CKeyID new_staker_id = ToKeyID(*new_staker);
+
+    // Optional filter, so a wallet holding several owners can rotate one of them.
+    bool filter_owner = false;
+    CKeyID wanted_owner;
+    if (request.params.size() > 1 && !request.params[1].isNull() && !request.params[1].get_str().empty()) {
+        CTxDestination owner_dest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(owner_dest))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid BitcoinPoS owner address");
+        const PKHash* owner = boost::get<PKHash>(&owner_dest);
+        if (!owner)
+            throw JSONRPCError(RPC_WALLET_ERROR, "Unable to get owner pubkey hash from owner_address");
+        wanted_owner = ToKeyID(*owner);
+        filter_owner = true;
+    }
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    // Delegated coins only: fIncludeColdStaking stays false because those are outputs
+    // where this wallet holds the *staking* key, which cannot sign a spend.
+    std::vector<COutput> coins;
+    pwallet->AvailableCoins(coins, /* fOnlySafe */ true, /* coinControl */ nullptr,
+                            /* fIncludeDelegated */ true, /* fIncludeColdStaking */ false);
+
+    CCoinControl coin_control;
+    coin_control.fAllowOtherInputs = false;
+    std::map<CKeyID, CAmount> by_owner;
+    CAmount total = 0;
+    int rotated = 0;
+    int already_current = 0;
+
+    for (const COutput& out : coins) {
+        const CTxOut& txout = out.tx->tx->vout[out.i];
+        std::vector<std::vector<unsigned char>> solutions;
+        if (Solver(txout.scriptPubKey, solutions) != TxoutType::COLDSTAKE || solutions.size() < 2)
+            continue;
+
+        // Two statements each: `CKeyID x(uint160(v))` is parsed as a function
+        // declaration, not a variable.
+        const uint160 current_staker_hash(solutions[0]);
+        const CKeyID current_staker(current_staker_hash);
+        const uint160 owner_hash(solutions[1]);
+        const CKeyID owner(owner_hash);
+
+        if (filter_owner && owner != wanted_owner) continue;
+        // The owner key is what signs this spend, so without it the output cannot move
+        // no matter who is staking it.
+        if (!pwallet->HaveKeyForKeyID(owner)) continue;
+        if (current_staker == new_staker_id) { ++already_current; continue; }
+
+        coin_control.Select(COutPoint(out.tx->GetHash(), out.i));
+        by_owner[owner] += txout.nValue;
+        total += txout.nValue;
+        ++rotated;
+    }
+
+    if (rotated == 0) {
+        std::string err = "No delegated outputs to rotate.";
+        if (already_current > 0) {
+            err += strprintf(" %d output(s) are already delegated to that staking address.", already_current);
+        } else {
+            err += " This wallet holds no cold-staked outputs whose owner key it has"
+                   " (only the owner key can move them).";
+        }
+        throw JSONRPCError(RPC_WALLET_ERROR, err);
+    }
+
+    // One output per owner, so a wallet with several owners keeps them separate rather
+    // than silently consolidating them under one key.
+    std::vector<CRecipient> recipients;
+    for (const auto& entry : by_owner) {
+        // The fee comes out of the delegated value: these coins are the only inputs, so
+        // there is nothing else to pay it from.
+        recipients.push_back({GetScriptForStakeDelegation(new_staker_id, entry.first), entry.second, true});
+    }
+
+    bilingual_str error;
+    CAmount nFeeRequired;
+    int nChangePosRet = -1;
+    FeeCalculation fee_calc_out;
+    CTransactionRef tx;
+    if (!pwallet->CreateTransaction(recipients, tx, nFeeRequired, nChangePosRet, error, coin_control, fee_calc_out,
+                                    !pwallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS), /* fIncludeDelegated */ true)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, error.original);
+    }
+
+    pwallet->CommitTransaction(tx, {}, {});
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", tx->GetHash().GetHex());
+    result.pushKV("new_staker_address", request.params[0].get_str());
+    result.pushKV("outputs_rotated", rotated);
+    result.pushKV("amount_rotated", ValueFromAmount(total));
+    return result;
+},
+    };
+}
+
 static RPCHelpMan delegatestake()
 {
     return RPCHelpMan{"delegatestake",
@@ -4890,6 +5033,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "sendmany",                         &sendmany,                      {"dummy","amounts","minconf","comment","subtractfeefrom","replaceable","conf_target","estimate_mode","fee_rate","verbose"} },
     { "wallet",             "sendtoaddress",                    &sendtoaddress,                 {"address","amount","comment","comment_to","subtractfeefromamount","replaceable","conf_target","estimate_mode","avoid_reuse","fee_rate","verbose"} },
     { "wallet",             "delegatestake",                    &delegatestake,                 {"staker_address", "owner_address", "amount", "include_delegated", "allow_self_delegation"} },
+    { "wallet",             "rotatestakingkey",                 &rotatestakingkey,              {"new_staker_address", "owner_address"} },
     { "wallet",             "sethdseed",                        &sethdseed,                     {"newkeypool","seed"} },
     { "wallet",             "setlabel",                         &setlabel,                      {"address","label"} },
     { "wallet",             "settxfee",                         &settxfee,                      {"amount"} },

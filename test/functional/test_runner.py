@@ -149,6 +149,7 @@ BASE_SCRIPTS = [
     'wallet_avoidreuse.py --descriptors',
     'wallet_coldstaking.py',
     'wallet_decrypt.py',
+    'wallet_staking_rotation.py',
     'wallet_coldstaking_passwordless.py',
     'wallet_coldstaking_compound.py',
     'wallet_staking_toggle.py',
