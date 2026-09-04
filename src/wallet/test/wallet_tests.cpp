@@ -75,7 +75,7 @@ static void AddKey(CWallet& wallet, const CKey& key)
     spk_man->AddKeyPubKey(key, key.GetPubKey());
 }
 
-BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChainSetup)
 {
     // Cap last block file size, and mine new block in a new block file.
     CBlockIndex* oldTip = ::ChainActive().Tip();
@@ -184,7 +184,7 @@ BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChain100Setup)
     }
 }
 
-BOOST_FIXTURE_TEST_CASE(importmulti_rescan, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(importmulti_rescan, TestChainSetup)
 {
     // Cap last block file size, and mine new block in a new block file.
     CBlockIndex* oldTip = ::ChainActive().Tip();
@@ -249,7 +249,7 @@ BOOST_FIXTURE_TEST_CASE(importmulti_rescan, TestChain100Setup)
 // greater or equal than key birthday. Previously there was a bug where
 // importwallet RPC would start the scan at the latest block with timestamp less
 // than or equal to key birthday.
-BOOST_FIXTURE_TEST_CASE(importwallet_rescan, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(importwallet_rescan, TestChainSetup)
 {
     // Create two blocks with same timestamp to verify that importwallet rescan
     // will pick up both blocks, not just the first.
@@ -327,7 +327,7 @@ BOOST_FIXTURE_TEST_CASE(importwallet_rescan, TestChain100Setup)
 // This is a regression test written to verify a bugfix for the immature credit
 // function. Similar tests probably should be written for the other credit and
 // debit functions.
-BOOST_FIXTURE_TEST_CASE(coin_mark_dirty_immature_credit, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(coin_mark_dirty_immature_credit, TestChainSetup)
 {
     NodeContext node;
     auto chain = interfaces::MakeChain(node);
@@ -504,7 +504,7 @@ BOOST_AUTO_TEST_CASE(WatchOnlyPubKeys)
     TestWatchOnlyPubKey(spk_man, pubkey);
 }
 
-class ListCoinsTestingSetup : public TestChain100Setup
+class ListCoinsTestingSetup : public TestChainSetup
 {
 public:
     ListCoinsTestingSetup()
@@ -625,7 +625,7 @@ BOOST_FIXTURE_TEST_CASE(ListCoins, ListCoinsTestingSetup)
     BOOST_CHECK_EQUAL(list.begin()->second.size(), 2U);
 }
 
-BOOST_FIXTURE_TEST_CASE(wallet_disableprivkeys, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(wallet_disableprivkeys, TestChainSetup)
 {
     NodeContext node;
     auto chain = interfaces::MakeChain(node);
@@ -676,7 +676,7 @@ static size_t CalculateNestedKeyhashInputSize(bool use_max_sig)
     return (size_t)GetVirtualTransactionInputSize(tx_in);
 }
 
-BOOST_FIXTURE_TEST_CASE(dummy_input_size_test, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(dummy_input_size_test, TestChainSetup)
 {
     BOOST_CHECK_EQUAL(CalculateNestedKeyhashInputSize(false), DUMMY_NESTED_P2WPKH_INPUT_SIZE);
     BOOST_CHECK_EQUAL(CalculateNestedKeyhashInputSize(true), DUMMY_NESTED_P2WPKH_INPUT_SIZE);
@@ -721,7 +721,7 @@ BOOST_FIXTURE_TEST_CASE(wallet_descriptor_test, BasicTestingSetup)
 //! wallet rescan and notifications are immediately synced, to verify the wallet
 //! must already have a handler in place for them, and there's no gap after
 //! rescanning where new transactions in new blocks could be lost.
-BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChainSetup)
 {
     // Create new wallet with known key and unload it.
     auto chain = interfaces::MakeChain(m_node);
@@ -815,7 +815,7 @@ BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChain100Setup)
     TestUnloadWallet(std::move(wallet));
 }
 
-BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)
+BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChainSetup)
 {
     auto chain = interfaces::MakeChain(m_node);
     auto wallet = TestLoadWallet(*chain);

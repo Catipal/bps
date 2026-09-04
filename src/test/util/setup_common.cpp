@@ -195,9 +195,12 @@ TestingSetup::~TestingSetup()
     pblocktree.reset();
 }
 
-TestChain100Setup::TestChain100Setup()
+TestChainSetup::TestChainSetup()
 {
-    // Generate a 100-block chain:
+    // COINBASE_MATURITY blocks, so the first coinbase is spendable. That is 500
+    // here, not the 100 this fixture was called for years after the constant
+    // changed -- which is how tests ended up asserting Bitcoin's subsidy and
+    // sitting past regtest's BIP34 height without anyone meaning them to.
     coinbaseKey.MakeNewKey(true);
     CScript scriptPubKey = CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
     for (int i = 0; i < COINBASE_MATURITY; i++) {
@@ -207,7 +210,7 @@ TestChain100Setup::TestChain100Setup()
     }
 }
 
-CBlock TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransaction>& txns, const CScript& scriptPubKey)
+CBlock TestChainSetup::CreateAndProcessBlock(const std::vector<CMutableTransaction>& txns, const CScript& scriptPubKey)
 {
     const CChainParams& chainparams = Params();
     CTxMemPool empty_pool;
@@ -227,7 +230,7 @@ CBlock TestChain100Setup::CreateAndProcessBlock(const std::vector<CMutableTransa
     return block;
 }
 
-TestChain100Setup::~TestChain100Setup()
+TestChainSetup::~TestChainSetup()
 {
     gArgs.ForceSetArg("-segwitheight", "0");
 }
