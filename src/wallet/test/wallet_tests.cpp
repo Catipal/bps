@@ -83,6 +83,15 @@ BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChain100Setup)
     CreateAndProcessBlock({}, GetScriptForRawPubKey(coinbaseKey.GetPubKey()));
     CBlockIndex* newTip = ::ChainActive().Tip();
 
+    // Upstream hardcodes 100 and 50 COIN below, which assumes two blocks at Bitcoin's
+    // flat 50 COIN subsidy. This chain's reward steps down (see GetBlockSubsidy), and
+    // the fixture is COINBASE_MATURITY = 500 blocks deep, which on regtest is already
+    // past the first step, so these two blocks pay 25 each. Ask what they actually paid
+    // rather than assuming -- the point of the check is that the wallet credits the
+    // block rewards it scanned, not what those rewards happen to be.
+    const CAmount subsidy_old = GetBlockSubsidy(oldTip->nHeight, Params().GetConsensus());
+    const CAmount subsidy_new = GetBlockSubsidy(newTip->nHeight, Params().GetConsensus());
+
     NodeContext node;
     auto chain = interfaces::MakeChain(node);
 
@@ -120,7 +129,7 @@ BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChain100Setup)
         BOOST_CHECK(result.last_failed_block.IsNull());
         BOOST_CHECK_EQUAL(result.last_scanned_block, newTip->GetBlockHash());
         BOOST_CHECK_EQUAL(*result.last_scanned_height, newTip->nHeight);
-        BOOST_CHECK_EQUAL(wallet.GetBalance().m_mine_immature, 100 * COIN);
+        BOOST_CHECK_EQUAL(wallet.GetBalance().m_mine_immature, subsidy_old + subsidy_new);
     }
 
     // Prune the older block file.
@@ -146,7 +155,7 @@ BOOST_FIXTURE_TEST_CASE(scan_for_wallet_transactions, TestChain100Setup)
         BOOST_CHECK_EQUAL(result.last_failed_block, oldTip->GetBlockHash());
         BOOST_CHECK_EQUAL(result.last_scanned_block, newTip->GetBlockHash());
         BOOST_CHECK_EQUAL(*result.last_scanned_height, newTip->nHeight);
-        BOOST_CHECK_EQUAL(wallet.GetBalance().m_mine_immature, 50 * COIN);
+        BOOST_CHECK_EQUAL(wallet.GetBalance().m_mine_immature, subsidy_new);
     }
 
     // Prune the remaining block file.
@@ -298,10 +307,13 @@ BOOST_FIXTURE_TEST_CASE(importwallet_rescan, TestChain100Setup)
         RemoveWallet(wallet, nullopt);
 
         BOOST_CHECK_EQUAL(wallet->mapWallet.size(), 3U);
-        BOOST_CHECK_EQUAL(m_coinbase_txns.size(), 103U);
+        // The fixture mines COINBASE_MATURITY blocks, not the 100 its name suggests,
+        // and this test adds three more. Upstream's 103 and "i >= 100" were the same
+        // two numbers written out for Bitcoin's maturity.
+        BOOST_CHECK_EQUAL(m_coinbase_txns.size(), size_t(COINBASE_MATURITY) + 3U);
         for (size_t i = 0; i < m_coinbase_txns.size(); ++i) {
             bool found = wallet->GetWalletTx(m_coinbase_txns[i]->GetHash());
-            bool expected = i >= 100;
+            bool expected = i >= size_t(COINBASE_MATURITY);
             BOOST_CHECK_EQUAL(found, expected);
         }
     }
@@ -338,7 +350,10 @@ BOOST_FIXTURE_TEST_CASE(coin_mark_dirty_immature_credit, TestChain100Setup)
     // credit amount is calculated.
     wtx.MarkDirty();
     BOOST_CHECK(spk_man->AddKeyPubKey(coinbaseKey, coinbaseKey.GetPubKey()));
-    BOOST_CHECK_EQUAL(wtx.GetImmatureCredit(), 50*COIN);
+    // Not a flat 50 COIN here: the fixture is COINBASE_MATURITY = 500 blocks deep,
+    // which on regtest is past the first reward step, so this coinbase paid less.
+    BOOST_CHECK_EQUAL(wtx.GetImmatureCredit(),
+                      GetBlockSubsidy(::ChainActive().Height(), Params().GetConsensus()));
 }
 
 static int64_t AddTx(ChainstateManager& chainman, CWallet& wallet, uint32_t lockTime, int64_t mockTime, int64_t blockTime)

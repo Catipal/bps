@@ -29,6 +29,8 @@
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
+#include <algorithm>
+
 #include <boost/test/unit_test.hpp>
 
 #include <univalue.h>
@@ -152,6 +154,19 @@ BOOST_AUTO_TEST_CASE(tx_valid)
             std::string transaction = test[1].get_str();
             CDataStream stream(ParseHex(transaction), SER_NETWORK, PROTOCOL_VERSION);
             CTransaction tx(deserialize, stream);
+
+            // Many of Bitcoin's CHECKLOCKTIMEVERIFY and CHECKSEQUENCEVERIFY vectors
+            // use a single zero-value, empty-script output as a placeholder, because
+            // the output is irrelevant to what they test. This chain rejects that:
+            // CheckTransaction refuses an empty output outside a coinbase or coinstake,
+            // a rule it needs because a coinstake's first output is empty. So those
+            // vectors describe transactions that are invalid here for a reason that has
+            // nothing to do with the locktime semantics they were written for.
+            // Skipped rather than deleted: the rule is what makes them inapplicable, so
+            // if it is ever relaxed they come back on their own.
+            const bool has_empty_output = std::any_of(tx.vout.begin(), tx.vout.end(),
+                                                      [](const CTxOut& o) { return o.IsEmpty(); });
+            if (has_empty_output && !tx.IsCoinBase() && !tx.IsCoinStake()) continue;
 
             TxValidationState state;
             BOOST_CHECK_MESSAGE(CheckTransaction(tx, state), strTest);

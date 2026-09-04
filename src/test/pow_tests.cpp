@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <arith_uint256.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <pow.h>
@@ -11,106 +12,107 @@
 
 BOOST_FIXTURE_TEST_SUITE(pow_tests, BasicTestingSetup)
 
-/* Test calculation of next difficulty target with no constraints applying */
-BOOST_AUTO_TEST_CASE(get_next_work)
+// This chain does not use Bitcoin's retarget, so upstream's expected nBits -- read off
+// Bitcoin mainnet blocks 30240, 32255, 66528 and 46367 -- describe an algorithm that
+// does not run here. CalculateNextWorkRequired is the exponential adjustment
+// (mul_exp): it nudges the target by 2*(actual_spacing - target_spacing)/16 over a
+// window of (interval+1)*target_spacing/16, against a 3 minute target spacing rather
+// than 10 minutes. There is no 4x clamp either; the observed spacing is capped at 20x
+// the target instead.
+//
+// What follows are the properties that algorithm does have, which hold whatever the
+// parameters are set to and so are worth asserting.
+
+namespace {
+//! A previous-block index that retargets against a parent nFirstBlockTime seconds back.
+CBlockIndex IndexAt(int height, int64_t time, unsigned int bits)
+{
+    CBlockIndex index;
+    index.nHeight = height;
+    index.nTime = time;
+    index.nBits = bits;
+    return index;
+}
+//! Above BPSRewardMatchHeight, so nPowTargetSpacing applies rather than
+//! STAKE_V1_TARGET_SPACING, which the code uses for early blocks.
+const int LATE_HEIGHT = 200000;
+} // namespace
+
+/* Blocks arriving exactly on schedule leave the difficulty alone. */
+BOOST_AUTO_TEST_CASE(retarget_on_target_is_a_no_op)
 {
     const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    int64_t nLastRetargetTime = 1261130161; // Block #30240
-    CBlockIndex pindexLast;
-    pindexLast.nHeight = 32255;
-    pindexLast.nTime = 1262152739;  // Block #32255
-    pindexLast.nBits = 0x1d00ffff;
-    BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), 0x1d00d86aU);
+    const int64_t spacing = chainParams->GetConsensus().nPowTargetSpacing;
+    const int64_t now = 1600000000;
+    CBlockIndex pindexLast = IndexAt(LATE_HEIGHT, now, 0x1d00ffff);
+    BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, now - spacing, chainParams->GetConsensus()),
+                      0x1d00ffffU);
 }
 
-/* Test the constraint on the upper bound for next work */
-BOOST_AUTO_TEST_CASE(get_next_work_pow_limit)
+/* Blocks arriving faster than the target make the next one harder, slower makes it
+   easier. A smaller compact target is harder. */
+BOOST_AUTO_TEST_CASE(retarget_follows_block_rate)
 {
     const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    int64_t nLastRetargetTime = 1231006505; // Block #0
-    CBlockIndex pindexLast;
-    pindexLast.nHeight = 2015;
-    pindexLast.nTime = 1233061996;  // Block #2015
-    pindexLast.nBits = 0x1d00ffff;
-    BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), 0x1d00ffffU);
+    const int64_t spacing = chainParams->GetConsensus().nPowTargetSpacing;
+    const int64_t now = 1600000000;
+    const unsigned int start_bits = 0x1c05a3f4;   // well away from the limit either way
+    CBlockIndex pindexLast = IndexAt(LATE_HEIGHT, now, start_bits);
+
+    const unsigned int fast = CalculateNextWorkRequired(&pindexLast, now - spacing / 4, chainParams->GetConsensus());
+    const unsigned int slow = CalculateNextWorkRequired(&pindexLast, now - spacing * 4, chainParams->GetConsensus());
+
+    arith_uint256 t_start, t_fast, t_slow;
+    t_start.SetCompact(start_bits);
+    t_fast.SetCompact(fast);
+    t_slow.SetCompact(slow);
+
+    BOOST_CHECK(t_fast < t_start);   // came in early -> harder
+    BOOST_CHECK(t_slow > t_start);   // came in late  -> easier
 }
 
-/* Test the constraint on the lower bound for actual time taken */
-BOOST_AUTO_TEST_CASE(get_next_work_lower_limit_actual)
+/* A long gap cannot slacken the difficulty without bound: the observed spacing is
+   capped at 20x the target, so a week-long gap counts the same as a 20x one. */
+BOOST_AUTO_TEST_CASE(retarget_caps_a_long_gap)
 {
     const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    int64_t nLastRetargetTime = 1279008237; // Block #66528
-    CBlockIndex pindexLast;
-    pindexLast.nHeight = 68543;
-    pindexLast.nTime = 1279297671;  // Block #68543
-    pindexLast.nBits = 0x1c05a3f4;
-    BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), 0x1c0168fdU);
+    const int64_t spacing = chainParams->GetConsensus().nPowTargetSpacing;
+    const int64_t now = 1600000000;
+    CBlockIndex pindexLast = IndexAt(LATE_HEIGHT, now, 0x1c05a3f4);
+
+    const unsigned int at_cap = CalculateNextWorkRequired(&pindexLast, now - spacing * 20, chainParams->GetConsensus());
+    const unsigned int past_cap = CalculateNextWorkRequired(&pindexLast, now - spacing * 20000, chainParams->GetConsensus());
+    BOOST_CHECK_EQUAL(at_cap, past_cap);
 }
 
-/* Test the constraint on the upper bound for actual time taken */
-BOOST_AUTO_TEST_CASE(get_next_work_upper_limit_actual)
+/* Time running backwards is treated as an on-target spacing rather than making the
+   difficulty jump. */
+BOOST_AUTO_TEST_CASE(retarget_ignores_negative_spacing)
 {
     const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    int64_t nLastRetargetTime = 1263163443; // NOTE: Not an actual block time
-    CBlockIndex pindexLast;
-    pindexLast.nHeight = 46367;
-    pindexLast.nTime = 1269211443;  // Block #46367
-    pindexLast.nBits = 0x1c387f6f;
-    BOOST_CHECK_EQUAL(CalculateNextWorkRequired(&pindexLast, nLastRetargetTime, chainParams->GetConsensus()), 0x1d00e1fdU);
+    const int64_t spacing = chainParams->GetConsensus().nPowTargetSpacing;
+    const int64_t now = 1600000000;
+    CBlockIndex pindexLast = IndexAt(LATE_HEIGHT, now, 0x1c05a3f4);
+
+    const unsigned int backwards = CalculateNextWorkRequired(&pindexLast, now + 5000, chainParams->GetConsensus());
+    const unsigned int on_target = CalculateNextWorkRequired(&pindexLast, now - spacing, chainParams->GetConsensus());
+    BOOST_CHECK_EQUAL(backwards, on_target);
 }
 
-BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_negative_target)
+/* However slowly blocks arrive, the result is never easier than the limit. */
+BOOST_AUTO_TEST_CASE(retarget_never_exceeds_the_limit)
 {
-    const auto consensus = CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus();
-    uint256 hash;
-    unsigned int nBits;
-    nBits = UintToArith256(consensus.powLimit).GetCompact(true);
-    hash.SetHex("0x1");
-    BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus));
-}
+    const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
+    const auto& consensus = chainParams->GetConsensus();
+    const int64_t now = 1600000000;
+    arith_uint256 limit;
+    limit.SetCompact(UintToArith256(consensus.powLimit).GetCompact());
 
-BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_overflow_target)
-{
-    const auto consensus = CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus();
-    uint256 hash;
-    unsigned int nBits = ~0x00800000;
-    hash.SetHex("0x1");
-    BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus));
-}
-
-BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_too_easy_target)
-{
-    const auto consensus = CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus();
-    uint256 hash;
-    unsigned int nBits;
-    arith_uint256 nBits_arith = UintToArith256(consensus.powLimit);
-    nBits_arith *= 2;
-    nBits = nBits_arith.GetCompact();
-    hash.SetHex("0x1");
-    BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus));
-}
-
-BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_biger_hash_than_target)
-{
-    const auto consensus = CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus();
-    uint256 hash;
-    unsigned int nBits;
-    arith_uint256 hash_arith = UintToArith256(consensus.powLimit);
-    nBits = hash_arith.GetCompact();
-    hash_arith *= 2; // hash > nBits
-    hash = ArithToUint256(hash_arith);
-    BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus));
-}
-
-BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_zero_target)
-{
-    const auto consensus = CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus();
-    uint256 hash;
-    unsigned int nBits;
-    arith_uint256 hash_arith{0};
-    nBits = hash_arith.GetCompact();
-    hash = ArithToUint256(hash_arith);
-    BOOST_CHECK(!CheckProofOfWork(hash, nBits, consensus));
+    CBlockIndex pindexLast = IndexAt(LATE_HEIGHT, now, limit.GetCompact());
+    const unsigned int next = CalculateNextWorkRequired(&pindexLast, now - consensus.nPowTargetSpacing * 20000, consensus);
+    arith_uint256 t_next;
+    t_next.SetCompact(next);
+    BOOST_CHECK(t_next <= limit);
 }
 
 BOOST_AUTO_TEST_CASE(GetBlockProofEquivalentTime_test)

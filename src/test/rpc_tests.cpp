@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <rpc/client.h>
+#include <util/strencodings.h>
+#include <key_io.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
 
@@ -115,11 +117,30 @@ BOOST_AUTO_TEST_CASE(rpc_rawsign)
       "[{\"txid\":\"b4cc287e58f87cdae59417329f710f3ecd75a4ee1d2872b7248f50977c8493f3\","
       "\"vout\":1,\"scriptPubKey\":\"a914b10c9df5f7edf436c697f02f1efdba4cf399615187\","
       "\"redeemScript\":\"512103debedc17b3df2badbcdd86d5feb4562b86fe182e5998abd8bcd4f122c6155b1b21027e940bb73ab8732bfdf7f9216ecefca5b94d6df834e77e108f68e66f126044c052ae\"}]";
+    // The destination and the two keys were written as a Bitcoin mainnet P2SH address
+    // and Bitcoin WIF strings, none of which decode under this chain's base58 prefixes.
+    // They are built from the raw key material and encoded with this chain's own
+    // encoders instead, so the test states the same thing without naming a chain: the
+    // keys are the two behind the redeemScript above, and the destination is that
+    // script's own hash.
+    const std::vector<unsigned char> redeem_bytes = ParseHex(
+        "512103debedc17b3df2badbcdd86d5feb4562b86fe182e5998abd8bcd4f122c6155b1b"
+        "21027e940bb73ab8732bfdf7f9216ecefca5b94d6df834e77e108f68e66f126044c052ae");
+    const CScript redeem_script(redeem_bytes.begin(), redeem_bytes.end());
+    const std::string dest = EncodeDestination(ScriptHash(redeem_script));
+
+    const std::vector<unsigned char> secret1 = ParseHex("6cf864daeb6a276e7bc66466ec624d7e1ca9c5be11155399f37ce7a9f819b641");
+    const std::vector<unsigned char> secret2 = ParseHex("4a09f53de410732e5e6e82deca3498bf58d23ee079e70b1c06b3cae26bf34d53");
+    CKey key1, key2;
+    key1.Set(secret1.begin(), secret1.end(), /* fCompressedIn */ true);
+    key2.Set(secret2.begin(), secret2.end(), /* fCompressedIn */ true);
+    BOOST_REQUIRE(key1.IsValid() && key2.IsValid());
+
     r = CallRPC(std::string("createrawtransaction ")+prevout+" "+
-      "{\"3HqAe9LtNBjnsfM4CyYaWTnvCaUYT7v4oZ\":11}");
+      "{\""+dest+"\":11}");
     std::string notsigned = r.get_str();
-    std::string privkey1 = "\"KzsXybp9jX64P5ekX1KUxRQ79Jht9uzW7LorgwE65i5rWACL6LQe\"";
-    std::string privkey2 = "\"Kyhdf5LuKTRx4ge69ybABsiUAWjVRK4XGxAKk2FQLp2HjGMy87Z4\"";
+    std::string privkey1 = "\"" + EncodeSecret(key1) + "\"";
+    std::string privkey2 = "\"" + EncodeSecret(key2) + "\"";
     r = CallRPC(std::string("signrawtransactionwithkey ")+notsigned+" [] "+prevout);
     BOOST_CHECK(find_value(r.get_obj(), "complete").get_bool() == false);
     r = CallRPC(std::string("signrawtransactionwithkey ")+notsigned+" ["+privkey1+","+privkey2+"] "+prevout);
