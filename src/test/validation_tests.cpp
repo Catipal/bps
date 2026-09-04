@@ -13,49 +13,92 @@
 
 BOOST_FIXTURE_TEST_SUITE(validation_tests, TestingSetup)
 
-static void TestBlockSubsidyHalvings(const Consensus::Params& consensusParams)
+// This chain does not halve, so upstream's "every step is half the one before" no
+// longer describes GetBlockSubsidy at all. It has two phases:
+//
+//   heights 1 .. 4*BPSRewardMatchStep   50 COIN, halved once per BPSRewardMatchStep
+//   above that                          6.25 COIN, reduced by 25% per nSubsidyHalvingInterval,
+//                                       and zero once that has happened 64 times
+//
+// Only the first phase has exact, parameter-independent values (they are integer
+// shifts). The second multiplies by pow(0.75, n) in floating point and truncates, and
+// where the phases meet depends on how BPSRewardMatchStep and nSubsidyHalvingInterval
+// relate -- on regtest the interval is shorter than the step, so the second phase does
+// not begin at 6.25. So the second phase is checked by its properties rather than by
+// restating the formula, which would only assert that the code equals itself.
+static void CheckSubsidySchedule(const Consensus::Params& consensusParams)
 {
-    int maxHalvings = 64;
-    CAmount nInitialSubsidy = 50 * COIN;
+    const CAmount nInitialSubsidy = 50 * COIN;
 
-    CAmount nPreviousSubsidy = nInitialSubsidy * 2; // for height == 0
-    BOOST_CHECK_EQUAL(nPreviousSubsidy, nInitialSubsidy * 2);
-    for (int nHalvings = 0; nHalvings < maxHalvings; nHalvings++) {
-        int nHeight = nHalvings * consensusParams.nSubsidyHalvingInterval;
-        CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
+    // Phase one: four exact halvings, and each one holds for its whole step.
+    for (int step = 0; step <= 3; ++step) {
+        const CAmount expected = nInitialSubsidy >> step;
+        BOOST_CHECK_EQUAL(GetBlockSubsidy(step * consensusParams.BPSRewardMatchStep + 1, consensusParams), expected);
+        BOOST_CHECK_EQUAL(GetBlockSubsidy((step + 1) * consensusParams.BPSRewardMatchStep, consensusParams), expected);
+    }
+
+    // Phase two: never rises, never exceeds the initial subsidy, and ends at zero
+    // rather than trailing off into dust.
+    CAmount nPreviousSubsidy = nInitialSubsidy;
+    for (int r = 0; r <= 64; ++r) {
+        const int nHeight = consensusParams.BPSRewardMatchHeight + r * consensusParams.nSubsidyHalvingInterval + 1;
+        const CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
         BOOST_CHECK(nSubsidy <= nInitialSubsidy);
-        BOOST_CHECK_EQUAL(nSubsidy, nPreviousSubsidy / 2);
+        BOOST_CHECK(nSubsidy <= nPreviousSubsidy);
         nPreviousSubsidy = nSubsidy;
     }
-    BOOST_CHECK_EQUAL(GetBlockSubsidy(maxHalvings * consensusParams.nSubsidyHalvingInterval, consensusParams), 0);
-}
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(consensusParams.BPSRewardMatchHeight + 64 * consensusParams.nSubsidyHalvingInterval + 1, consensusParams), 0);
 
-static void TestBlockSubsidyHalvings(int nSubsidyHalvingInterval)
-{
-    Consensus::Params consensusParams;
-    consensusParams.nSubsidyHalvingInterval = nSubsidyHalvingInterval;
-    TestBlockSubsidyHalvings(consensusParams);
+    // And it never goes back up anywhere in between.
+    nPreviousSubsidy = GetBlockSubsidy(1, consensusParams);
+    for (int nHeight = 1; nHeight < 4000000; nHeight += 997) {
+        const CAmount nSubsidy = GetBlockSubsidy(nHeight, consensusParams);
+        BOOST_CHECK(nSubsidy <= nPreviousSubsidy);
+        BOOST_CHECK(nSubsidy <= nInitialSubsidy);
+        nPreviousSubsidy = nSubsidy;
+    }
 }
 
 BOOST_AUTO_TEST_CASE(block_subsidy_test)
 {
-    const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
-    TestBlockSubsidyHalvings(chainParams->GetConsensus()); // As in main
-    TestBlockSubsidyHalvings(150); // As in regtest
-    TestBlockSubsidyHalvings(1000); // Just another interval
+    // Upstream also called this with a bare Consensus::Params carrying nothing but
+    // nSubsidyHalvingInterval, to try other intervals. That is undefined behaviour
+    // here: BPSRewardMatchStep is a plain int with no initialiser and GetBlockSubsidy
+    // divides by it. Only real chain parameters are used now.
+    CheckSubsidySchedule(CreateChainParams(*m_node.args, CBaseChainParams::MAIN)->GetConsensus());
+    CheckSubsidySchedule(CreateChainParams(*m_node.args, CBaseChainParams::TESTNET)->GetConsensus());
+    CheckSubsidySchedule(CreateChainParams(*m_node.args, CBaseChainParams::REGTEST)->GetConsensus());
 }
 
 BOOST_AUTO_TEST_CASE(subsidy_limit_test)
 {
     const auto chainParams = CreateChainParams(*m_node.args, CBaseChainParams::MAIN);
     CAmount nSum = 0;
-    for (int nHeight = 0; nHeight < 14000000; nHeight += 1000) {
+    // From height 1, not 0. This chain indexes its reward epochs as
+    // (nHeight - 1) / BPSRewardMatchStep, so a sample at height 0 falls in the same
+    // epoch as height 1 and the loop counts an extra 1000 blocks at the full 50 COIN.
+    // That alone is ~50,000 BPS and pushes the total over MAX_MONEY, which made it look
+    // like the schedule overpays. It does not: sampling from 1 lands exactly on every
+    // epoch boundary and matches a block-by-block sum to the satoshi.
+    for (int nHeight = 1; nHeight < 60000000; nHeight += 1000) {
         CAmount nSubsidy = GetBlockSubsidy(nHeight, chainParams->GetConsensus());
         BOOST_CHECK(nSubsidy <= 50 * COIN);
         nSum += nSubsidy * 1000;
         BOOST_CHECK(MoneyRange(nSum));
     }
-    BOOST_CHECK_EQUAL(nSum, CAmount{2099999997690000});
+
+    // Emission stops rather than continuing indefinitely.
+    BOOST_CHECK_EQUAL(GetBlockSubsidy(60000000, chainParams->GetConsensus()), 0);
+
+    // The total is a change detector, not an independently derived figure: it is what
+    // the current schedule pays out, recorded so that an accidental change to
+    // GetBlockSubsidy or to the parameters it reads shows up as a failing test rather
+    // than as quiet inflation. Sampled every 1000 blocks, which is exact here because
+    // BPSRewardMatchStep (40000) and nSubsidyHalvingInterval (700000) are both
+    // multiples of 1000.
+    // 20,999,999.601 BPS -- just under the 21,000,000 cap, which is plainly deliberate.
+    BOOST_CHECK_EQUAL(nSum, CAmount{2099999960100000});
+    BOOST_CHECK(MoneyRange(nSum));
 }
 
 BOOST_AUTO_TEST_CASE(signet_parse_tests)
