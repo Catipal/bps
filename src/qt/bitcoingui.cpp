@@ -1302,6 +1302,8 @@ void BitcoinGUI::setEncryptionStatus(WalletModel *walletModel)
     case WalletModel::Unencrypted:
         labelWalletEncryptionIcon->hide();
         encryptWalletAction->setChecked(false);
+        encryptWalletAction->setText(tr("&Encrypt Wallet..."));
+        encryptWalletAction->setStatusTip(tr("Encrypt the private keys that belong to your wallet"));
         changePassphraseAction->setEnabled(false);
         encryptWalletAction->setEnabled(true);
         break;
@@ -1318,16 +1320,28 @@ void BitcoinGUI::setEncryptionStatus(WalletModel *walletModel)
             labelWalletEncryptionIcon->setToolTip(tr("Wallet is <b>encrypted</b> and currently <b>unlocked</b>"));
         }
         encryptWalletAction->setChecked(true);
+        // Reads "Decrypt Wallet..." while encrypted, and stays enabled: unchecking it
+        // is what reaches AskPassphraseDialog::Decrypt. It used to be disabled here
+        // because decryption did not work, so the option was invisible exactly when it
+        // applied.
+        encryptWalletAction->setText(tr("&Decrypt Wallet..."));
+        encryptWalletAction->setStatusTip(tr("Remove the passphrase, leaving the private keys stored unencrypted"));
         changePassphraseAction->setEnabled(true);
-        encryptWalletAction->setEnabled(false);
+        encryptWalletAction->setEnabled(true);
         break;
     case WalletModel::Locked:
         labelWalletEncryptionIcon->show();
         labelWalletEncryptionIcon->setPixmap(platformStyle->SingleColorIcon(":/icons/lock_closed").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
         labelWalletEncryptionIcon->setToolTip(tr("Wallet is <b>encrypted</b> and currently <b>locked</b>"));
         encryptWalletAction->setChecked(true);
+        // Reads "Decrypt Wallet..." while encrypted, and stays enabled: unchecking it
+        // is what reaches AskPassphraseDialog::Decrypt. It used to be disabled here
+        // because decryption did not work, so the option was invisible exactly when it
+        // applied.
+        encryptWalletAction->setText(tr("&Decrypt Wallet..."));
+        encryptWalletAction->setStatusTip(tr("Remove the passphrase, leaving the private keys stored unencrypted"));
         changePassphraseAction->setEnabled(true);
-        encryptWalletAction->setEnabled(false);
+        encryptWalletAction->setEnabled(true);
         break;
     }
 }

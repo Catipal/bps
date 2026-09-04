@@ -501,6 +501,12 @@ public:
         m_wallet->m_enabled_staking = enabled;
         m_wallet->SetStakingEnabledSetting(enabled);
     }
+    void suspendStaking() override
+    {
+        // StopStake() clears m_enabled_staking and joins the thread; it deliberately
+        // does not touch the recorded preference.
+        m_wallet->StopStake();
+    }
     bool getEnabledStaking() override
     {
         return m_wallet->m_enabled_staking;

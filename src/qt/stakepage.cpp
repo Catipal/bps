@@ -108,6 +108,9 @@ void StakePage::setWalletModel(WalletModel *model)
         myDelegationsView->chooseType(7); // My delegations to others
 
         ui->checkStake->setChecked(model->wallet().getEnabledStaking());
+        // Nothing was watching this before, so the switch never noticed the wallet
+        // being encrypted or locked from anywhere else in the UI.
+        connect(model, &WalletModel::encryptionStatusChanged, this, &StakePage::updateEncryptionStatus);
         // Set the button to be enabled or disabled based on whether the wallet can give out new addresses.
         ui->newAddressButton->setEnabled(model->wallet().canGetAddresses());
 
@@ -246,6 +249,20 @@ void StakePage::updateAnnualROI()
 
 void StakePage::updateEncryptionStatus()
 {
+    if(!walletModel)
+        return;
+
+    // A locked wallet holds no key that can sign a coinstake, so staking cannot work.
+    // Stop it rather than leaving the switch on over a staker that silently does
+    // nothing -- which is what encrypting a staking wallet used to do.
+    // suspendStaking() and not setEnabledStaking(false): the user's recorded choice is
+    // left alone, so unlocking the wallet (or restarting it unencrypted) resumes.
+    if(WalletModel::Locked == walletModel->getEncryptionStatus() &&
+       walletModel->wallet().getEnabledStaking())
+    {
+        walletModel->wallet().suspendStaking();
+    }
+
     syncStakingSwitch();
 }
 

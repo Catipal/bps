@@ -33,16 +33,14 @@ QSwitchControl::QSwitchControl(QWidget *parent):
 
 void QSwitchControl::setChecked(bool checked)
 {
-    if(checked)
-    {
-        pbSwitch->move(this->width() - pbSwitch->width() - SwitchOffset, this->y() + SwitchOffset);
-        this->setStyleSheet(CustomFrameOnStlye);
-    }
-    else
-    {
-        pbSwitch->move(this->x() + SwitchOffset, this->y() + SwitchOffset);
-        this->setStyleSheet(CustomFrameOffStlye);
-    }
+    // pbSwitch is a child of this widget, so move() takes coordinates relative to
+    // this -- not to our own position inside our parent. Using this->x()/this->y()
+    // pushed the knob outside the 30px frame and it disappeared. The bug only showed
+    // when setChecked() was called directly: on a click, onStatusChanged() starts an
+    // animation that overwrites the geometry a frame later and hides the mistake.
+    pbSwitch->move(checked ? this->width() - pbSwitch->width() - SwitchOffset : SwitchOffset,
+                   SwitchOffset);
+    this->setStyleSheet(checked ? CustomFrameOnStlye : CustomFrameOffStlye);
 
     QAbstractButton::setChecked(checked);
 }
@@ -72,7 +70,9 @@ void QSwitchControl::onStatusChanged()
     }
     animation->start();
 
-    setChecked(checked);
+    // Not our setChecked(): the animation owns the knob's position from here, and
+    // snapping it to the end value first would fight the animation.
+    QAbstractButton::setChecked(checked);
     Q_EMIT clicked(checked);
 }
 
