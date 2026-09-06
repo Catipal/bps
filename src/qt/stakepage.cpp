@@ -252,17 +252,16 @@ void StakePage::updateEncryptionStatus()
     if(!walletModel)
         return;
 
-    // A locked wallet holds no key that can sign a coinstake, so staking cannot work.
-    // Stop it rather than leaving the switch on over a staker that silently does
-    // nothing -- which is what encrypting a staking wallet used to do.
-    // suspendStaking() and not setEnabledStaking(false): the user's recorded choice is
-    // left alone, so unlocking the wallet (or restarting it unencrypted) resumes.
-    if(WalletModel::Locked == walletModel->getEncryptionStatus() &&
-       walletModel->wallet().getEnabledStaking())
-    {
-        walletModel->wallet().suspendStaking();
-    }
-
+    // Deliberately does not stop staking when the wallet locks. ThreadStakeMiner
+    // already waits while `IsLocked() || !m_enabled_staking` and picks straight back up
+    // on unlock, so there is nothing to stop -- and stopping it was destructive: it
+    // joined the thread, and nothing started it again. Locking the wallet for a moment,
+    // which is exactly what the passphrase prompt behind Send does, killed staking for
+    // the rest of the session.
+    //
+    // So the switch shows whether staking is enabled, not whether it is signing right
+    // now. getstakingstatus already separates those: walletstakingenabled against
+    // staking.
     syncStakingSwitch();
 }
 

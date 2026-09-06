@@ -5032,11 +5032,11 @@ void CWallet::postInitProcess()
     // -staking gates whether staking happens at all, so an explicit -staking=0 still
     // wins; the per-wallet record then decides which wallets actually stake. A wallet
     // with no record staked before this existed, so it keeps staking.
-    // Not on a locked wallet: it holds no key that can sign a coinstake, so the staker
-    // would run and find nothing to do while getstakingstatus reported staking as
-    // enabled. The recorded preference is left alone, so unlocking it (or a wallet that
-    // was never encrypted, which is what the cold-staking setup uses) still stakes.
-    if (gArgs.GetBoolArg("-staking", DEFAULT_STAKE) && m_staking_enabled_setting.value_or(true) && !IsLocked()) {
+    // Started even if the wallet is locked. The staker waits on the lock rather than
+    // spinning, so it is ready the moment the wallet is unlocked. Refusing to start
+    // here meant an encrypted wallet came back from a restart with staking off no
+    // matter what the user had chosen, and unlocking it later did not help.
+    if (gArgs.GetBoolArg("-staking", DEFAULT_STAKE) && m_staking_enabled_setting.value_or(true)) {
         StartStake();
     }
 }

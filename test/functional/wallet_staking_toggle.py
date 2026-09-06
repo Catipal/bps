@@ -101,6 +101,55 @@ class StakingToggleTest(BitcoinTestFramework):
         assert_raises_rpc_error(-13, "the wallet is locked", enc.setstaking, True)
         self.log.info("...refused, as it holds no keys able to sign a coinstake")
 
+        # The three checks below are here because none of the above caught any of it.
+        # ThreadStakeMiner waits while `IsLocked() || !m_enabled_staking`, so a locked
+        # wallet is a pause, not a stop. Code that "helpfully" stopped the staker on
+        # lock joined the thread and nothing ever restarted it, so a momentary lock --
+        # exactly what the passphrase prompt behind the GUI's Send button causes --
+        # ended staking for the rest of the session. Everything above still passed,
+        # because none of it locks the wallet while staking is on.
+        self.log.info("Staking survives a lock/unlock cycle")
+        enc.walletpassphrase("passphrase", 1000)
+        assert_equal(enc.setstaking(True), True)
+        enc.walletlock()
+        assert_equal(enc.getstakingstatus()["walletstakingenabled"], True)
+        assert_equal(enc.getstakingstatus()["walletunlocked"], False)
+        enc.walletpassphrase("passphrase", 1000)
+        assert_equal(enc.getstakingstatus()["walletstakingenabled"], True)
+
+        self.log.info("...and repeated locking does not wear it down")
+        for _ in range(3):
+            enc.walletlock()
+            enc.walletpassphrase("passphrase", 1000)
+        assert_equal(enc.getstakingstatus()["walletstakingenabled"], True)
+
+        # The restarts below drop -staking=0. That flag is the global gate and it wins,
+        # so with it in place staking correctly stays off after a restart no matter what
+        # the wallet recorded -- which is what a node actually running staking looks
+        # like, and what the GUI runs with.
+        staking_args = [a for a in self.extra_args[0] if a != "-staking=0"] + ["-staking=1"]
+
+        self.log.info("An encrypted wallet comes back from a restart still staking")
+        # Locked at startup, because nothing has supplied the passphrase yet. Staking
+        # must still be on: refusing to start it here left an encrypted wallet with
+        # staking off after every restart, whatever the user had chosen, and unlocking
+        # later did not bring it back.
+        enc.unloadwallet()
+        self.restart_node(0, extra_args=staking_args)
+        node.loadwallet("enc")
+        enc = node.get_wallet_rpc("enc")
+        assert_equal(enc.getstakingstatus()["walletunlocked"], False)
+        assert_equal(enc.getstakingstatus()["walletstakingenabled"], True)
+
+        self.log.info("...and switching it off survives a restart too")
+        enc.walletpassphrase("passphrase", 1000)
+        assert_equal(enc.setstaking(False), False)
+        enc.unloadwallet()
+        self.restart_node(0, extra_args=staking_args)
+        node.loadwallet("enc")
+        enc = node.get_wallet_rpc("enc")
+        assert_equal(enc.getstakingstatus()["walletstakingenabled"], False)
+
 
 if __name__ == '__main__':
     StakingToggleTest().main()

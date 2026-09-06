@@ -288,10 +288,6 @@ public:
     //! Set wallet enabled for staking
     virtual void setEnabledStaking(bool enabled) = 0;
 
-    //! Stop staking without recording it as the user's choice. Used when the wallet
-    //! locks: staking cannot sign anything, but the user still wants it on when the
-    //! wallet is usable again.
-    virtual void suspendStaking() = 0;
 
     //! Get wallet enabled for staking
     virtual bool getEnabledStaking() = 0;

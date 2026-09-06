@@ -498,14 +498,16 @@ public:
     }
     void setEnabledStaking(bool enabled) override
     {
-        m_wallet->m_enabled_staking = enabled;
         m_wallet->SetStakingEnabledSetting(enabled);
-    }
-    void suspendStaking() override
-    {
-        // StopStake() clears m_enabled_staking and joins the thread; it deliberately
-        // does not touch the recorded preference.
-        m_wallet->StopStake();
+        // Setting the flag alone was not enough. Once the staking thread had exited,
+        // nothing started it again, so switching staking back on recorded the choice
+        // and then did nothing. StartStake sets the flag and starts the thread;
+        // StopStake clears it and joins.
+        if (enabled) {
+            m_wallet->StartStake();
+        } else {
+            m_wallet->StopStake();
+        }
     }
     bool getEnabledStaking() override
     {
