@@ -263,6 +263,18 @@ public:
         obj.pushKV("witness_program", HexStr(Span<const unsigned char>(id.program, id.length)));
         return obj;
     }
+
+    UniValue operator()(const ColdStakeDestination& dest) const
+    {
+        // Both keys are reported, because which one matters depends on the reader: the
+        // staker can only produce coinstakes paying back here, the owner can spend.
+        UniValue obj(UniValue::VOBJ);
+        obj.pushKV("isdelegation", true);
+        obj.pushKV("iswitness", false);
+        obj.pushKV("staker_pubkeyhash", HexStr(dest.staker));
+        obj.pushKV("owner_pubkeyhash", HexStr(dest.owner));
+        return obj;
+    }
 };
 
 UniValue DescribeAddress(const CTxDestination& dest)

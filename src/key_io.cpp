@@ -66,6 +66,18 @@ public:
         return bech32::Encode(m_params.Bech32HRP(), data);
     }
 
+    std::string operator()(const ColdStakeDestination& dest) const
+    {
+        // Two hashes, staker first, in the order the script itself carries them. The
+        // 40-byte payload is what distinguishes this from every other base58 address
+        // here, so a wallet that does not know the prefix rejects it rather than
+        // decoding it as something else.
+        std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::COLDSTAKE_ADDRESS);
+        data.insert(data.end(), dest.staker.begin(), dest.staker.end());
+        data.insert(data.end(), dest.owner.begin(), dest.owner.end());
+        return EncodeBase58Check(data);
+    }
+
     std::string operator()(const CNoDestination& no) const { return {}; }
 };
 
@@ -90,6 +102,21 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
             return ScriptHash(hash);
         }
     }
+    // A delegation address, tried on its own because its payload is two hashes rather
+    // than one: the 21-byte cap on the decode above cannot reach a 40-byte payload.
+    {
+        std::vector<unsigned char> cs_data;
+        const std::vector<unsigned char>& cold_prefix = params.Base58Prefix(CChainParams::COLDSTAKE_ADDRESS);
+        if (DecodeBase58Check(str, cs_data, cold_prefix.size() + 40) &&
+            cs_data.size() == cold_prefix.size() + 40 &&
+            std::equal(cold_prefix.begin(), cold_prefix.end(), cs_data.begin())) {
+            uint160 staker, owner;
+            std::copy(cs_data.begin() + cold_prefix.size(), cs_data.begin() + cold_prefix.size() + 20, staker.begin());
+            std::copy(cs_data.begin() + cold_prefix.size() + 20, cs_data.end(), owner.begin());
+            return ColdStakeDestination(staker, owner);
+        }
+    }
+
     data.clear();
     auto bech = bech32::Decode(str);
     if (bech.second.size() > 0 && bech.first == params.Bech32HRP()) {

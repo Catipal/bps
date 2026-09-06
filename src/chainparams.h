@@ -56,6 +56,9 @@ public:
         PUBKEY_ADDRESS,
         SCRIPT_ADDRESS,
         SECRET_KEY,
+        // A delegation address: two key hashes, so its payload is 40 bytes where every
+        // other base58 address here carries 20.
+        COLDSTAKE_ADDRESS,
         EXT_PUBLIC_KEY,
         EXT_SECRET_KEY,
 

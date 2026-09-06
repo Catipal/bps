@@ -330,6 +330,13 @@ public:
     {
         return CScript() << CScript::EncodeOP_N(id.version) << std::vector<unsigned char>(id.program, id.program + id.length);
     }
+
+    CScript operator()(const ColdStakeDestination& dest) const
+    {
+        // The same script delegatestake builds, so an output paid to this address is
+        // indistinguishable from one created by an explicit delegation.
+        return GetScriptForStakeDelegation(CKeyID(dest.staker), CKeyID(dest.owner));
+    }
 };
 } // namespace
 

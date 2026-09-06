@@ -202,6 +202,33 @@ struct WitnessUnknown
 };
 
 /**
+ * A delegation: TxoutType::COLDSTAKE destination (P2CS).
+ *
+ * Unlike every other destination this carries two keys, because the script does.
+ * The staker may only produce coinstakes that pay back to the same script; the owner
+ * may spend without restriction. Both are chosen by whoever creates the address, so a
+ * sender pays it like any other address and never needs to know it is a delegation.
+ */
+struct ColdStakeDestination
+{
+    // uint160 rather than CKeyID: only forward-declared here, which is why every other
+    // destination in this header stores the raw hash too. CKeyID derives from uint160,
+    // so conversion is free at the call sites where it is complete.
+    uint160 staker;
+    uint160 owner;
+
+    ColdStakeDestination() {}
+    ColdStakeDestination(const uint160& staker_in, const uint160& owner_in) : staker(staker_in), owner(owner_in) {}
+
+    friend bool operator==(const ColdStakeDestination& a, const ColdStakeDestination& b) {
+        return a.staker == b.staker && a.owner == b.owner;
+    }
+    friend bool operator<(const ColdStakeDestination& a, const ColdStakeDestination& b) {
+        return a.staker < b.staker || (a.staker == b.staker && a.owner < b.owner);
+    }
+};
+
+/**
  * A txout script template with a specific destination. It is either:
  *  * CNoDestination: no destination set
  *  * PKHash: TxoutType::PUBKEYHASH destination (P2PKH)
@@ -210,9 +237,10 @@ struct WitnessUnknown
  *  * WitnessV0KeyHash: TxoutType::WITNESS_V0_KEYHASH destination (P2WPKH)
  *  * WitnessUnknown: TxoutType::WITNESS_UNKNOWN/WITNESS_V1_TAPROOT destination (P2W???)
  *    (taproot outputs do not require their own type as long as no wallet support exists)
+ *  * ColdStakeDestination: TxoutType::COLDSTAKE destination (P2CS), which carries two keys
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
-typedef boost::variant<CNoDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessUnknown> CTxDestination;
+typedef boost::variant<CNoDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessUnknown, ColdStakeDestination> CTxDestination;
 
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);
