@@ -634,6 +634,147 @@ UniValue CreateColdStakeDelegation(const UniValue& params, CWallet* const pwalle
     return result;
 }
 
+static RPCHelpMan setstakingaddress()
+{
+    return RPCHelpMan{"setstakingaddress",
+                "\nChoose the staking key this wallet delegates its own coins to, and remember it.\n"
+                "\nSetting one turns on auto-delegation. From then on the wallet keeps its coins in\n"
+                "cold-stake outputs naming this key: getdelegationaddress needs no argument, and the\n"
+                "change from any spend comes back delegated instead of landing on a plain address and\n"
+                "dropping out of staking. Delegated coins are spent like any other, so nothing about\n"
+                "sending changes.\n"
+                "\nThe staking key can stake these coins and nothing else: OP_CHECKCOLDSTAKEVERIFY only\n"
+                "lets it produce coinstakes paying back to the same script. Only the owner keys, which\n"
+                "stay in this wallet, can move the coins.\n"
+                "\nCoins already received are not touched; use rotatestakingkey for those. Pass an empty\n"
+                "string to switch auto-delegation off.\n",
+                {
+                    {"staking_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The staking address to delegate to, or \"\" to stop delegating."},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::STR, "staking_address", "The staking address now in use, or empty if switched off"},
+                        {RPCResult::Type::BOOL, "auto_delegating", "Whether the wallet now delegates its own coins"},
+                    }},
+                RPCExamples{
+                    HelpExampleCli("setstakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                    + HelpExampleRpc("setstakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    LOCK(pwallet->cs_wallet);
+
+    Optional<CKeyID> staker;
+    const std::string arg = request.params[0].get_str();
+    if (!arg.empty()) {
+        CTxDestination dest = DecodeDestination(arg);
+        if (!IsValidDestination(dest))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid staking address");
+        const PKHash* hash = boost::get<PKHash>(&dest);
+        if (!hash)
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "staking_address must be a legacy address, since the script commits to a key hash");
+        staker = ToKeyID(*hash);
+    }
+
+    if (!pwallet->SetStakingAddress(staker))
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to write the staking address to the wallet");
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("staking_address", staker ? EncodeDestination(PKHash(*staker)) : "");
+    result.pushKV("auto_delegating", pwallet->IsAutoDelegating());
+    return result;
+},
+    };
+}
+
+static RPCHelpMan getdelegationaddress()
+{
+    return RPCHelpMan{"getdelegationaddress",
+                "\nReturn a receiving address whose coins are delegated the moment they arrive.\n"
+                "\nAn ordinary address produces outputs this wallet must delegate afterwards, which costs\n"
+                "a transaction and needs the passphrase. Coins paid to a delegation address are already\n"
+                "cold-staked: the staking key can begin staking them once they mature, without any\n"
+                "further action, and only the owner key can spend them.\n"
+                "\nThe address encodes both keys, so it is longer than a normal one, and only wallets that\n"
+                "understand this address type can pay it. Older wallets and exchanges will reject it.\n",
+                {
+                    {"staker_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The staking address that will stake coins sent here. Defaults to the one set with setstakingaddress."},
+                    {"owner_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The address that will own them. Defaults to a fresh address from this wallet."},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::STR, "address", "The delegation address to receive at"},
+                        {RPCResult::Type::STR, "staker_address", "The staking address it delegates to"},
+                        {RPCResult::Type::STR, "owner_address", "The address that can spend coins sent here"},
+                    }},
+                RPCExamples{
+                    HelpExampleCli("getdelegationaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                    + HelpExampleRpc("getdelegationaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    LOCK(pwallet->cs_wallet);
+
+    CKeyID staker_id;
+    if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
+        CTxDestination staker_dest = DecodeDestination(request.params[0].get_str());
+        if (!IsValidDestination(staker_dest))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid staker address");
+        const PKHash* staker = boost::get<PKHash>(&staker_dest);
+        if (!staker)
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "staker_address must be a legacy address, since the script commits to a key hash");
+        staker_id = ToKeyID(*staker);
+    } else if (pwallet->m_staking_address) {
+        staker_id = *pwallet->m_staking_address;
+    } else {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "No staker_address given and none set for this wallet; call setstakingaddress first");
+    }
+
+    // The owner side defaults to a fresh key, so repeated calls do not hand out the
+    // same address twice. The staker side is deliberately constant: one staking key
+    // stakes every output naming it, whatever the owner key beside it.
+    CTxDestination owner_dest;
+    if (request.params.size() > 1 && !request.params[1].isNull() && !request.params[1].get_str().empty()) {
+        owner_dest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(owner_dest))
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid owner address");
+    } else {
+        if (!pwallet->CanGetAddresses())
+            throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
+        std::string error;
+        if (!pwallet->GetNewDestination(OutputType::LEGACY, "", owner_dest, error))
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, error);
+    }
+    const PKHash* owner = boost::get<PKHash>(&owner_dest);
+    if (!owner)
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "owner_address must be a legacy address, since the script commits to a key hash");
+
+    // Watch the script, so the wallet recognises payments to it without a rescan.
+    const CScript script = GetScriptForStakeDelegation(staker_id, ToKeyID(*owner));
+    LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
+    spk_man.AddCScript(script);
+
+    const ColdStakeDestination dest(uint160(staker_id), uint160(ToKeyID(*owner)));
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", EncodeDestination(dest));
+    result.pushKV("staker_address", EncodeDestination(PKHash(staker_id)));
+    result.pushKV("owner_address", EncodeDestination(owner_dest));
+    return result;
+},
+    };
+}
+
 static RPCHelpMan rotatestakingkey()
 {
     return RPCHelpMan{"rotatestakingkey",
@@ -2864,6 +3005,7 @@ static RPCHelpMan getwalletinfo()
                         {RPCResult::Type::STR_AMOUNT, "cold_stake", "the total cold stake balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "immature_cold_stake", "the total immature cold stake balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "delegated", "the total delegated balance of the wallet in " + CURRENCY_UNIT},
+                        {RPCResult::Type::STR, "staking_address", /* optional */ true, "the staking key this wallet delegates its own coins to, if auto-delegation is on"},
                         {RPCResult::Type::STR_AMOUNT, "immature_delegated", "the total immature delegated balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "total", "the total balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::NUM, "txcount", "the total number of transactions in the wallet"},
@@ -2918,6 +3060,7 @@ static RPCHelpMan getwalletinfo()
     obj.pushKV("cold_stake", ValueFromAmount(bal.m_mine_cold_stake));
     obj.pushKV("immature_cold_stake", ValueFromAmount(bal.m_mine_immature_cold_stake));
     obj.pushKV("delegated", ValueFromAmount(bal.m_mine_delegated));
+    if (pwallet->m_staking_address) obj.pushKV("staking_address", EncodeDestination(PKHash(*pwallet->m_staking_address)));
     obj.pushKV("immature_delegated", ValueFromAmount(bal.m_mine_immature_delegated));
     obj.pushKV("total", ValueFromAmount(bal.m_mine_trusted + bal.m_mine_untrusted_pending + bal.m_mine_immature + bal.m_mine_delegated));
     obj.pushKV("txcount",       (int)pwallet->mapWallet.size());
@@ -4174,6 +4317,7 @@ public:
     }
 
     UniValue operator()(const WitnessUnknown& id) const { return UniValue(UniValue::VOBJ); }
+    UniValue operator()(const ColdStakeDestination& dest) const { return UniValue(UniValue::VOBJ); }
 };
 
 static UniValue DescribeWalletAddress(const CWallet* const pwallet, const CTxDestination& dest)
@@ -5034,6 +5178,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "sendtoaddress",                    &sendtoaddress,                 {"address","amount","comment","comment_to","subtractfeefromamount","replaceable","conf_target","estimate_mode","avoid_reuse","fee_rate","verbose"} },
     { "wallet",             "delegatestake",                    &delegatestake,                 {"staker_address", "owner_address", "amount", "include_delegated", "allow_self_delegation"} },
     { "wallet",             "rotatestakingkey",                 &rotatestakingkey,              {"new_staker_address", "owner_address"} },
+    { "wallet",             "getdelegationaddress",             &getdelegationaddress,          {"staker_address", "owner_address"} },
+    { "wallet",             "setstakingaddress",                &setstakingaddress,             {"staking_address"} },
     { "wallet",             "sethdseed",                        &sethdseed,                     {"newkeypool","seed"} },
     { "wallet",             "setlabel",                         &setlabel,                      {"address","label"} },
     { "wallet",             "settxfee",                         &settxfee,                      {"amount"} },

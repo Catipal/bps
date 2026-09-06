@@ -74,6 +74,7 @@ extern const std::string POOL;
 extern const std::string PURPOSE;
 extern const std::string SETTINGS;
 extern const std::string STAKINGENABLED;
+extern const std::string STAKINGADDRESS;
 extern const std::string TX;
 extern const std::string VERSION;
 extern const std::string WALLETDESCRIPTOR;
@@ -230,6 +231,8 @@ public:
     //! not a global setting: a staking wallet and a spending wallet want different
     //! answers, and -staking cannot express that.
     bool WriteStakingEnabled(bool enabled);
+    bool WriteStakingAddress(const uint160& staker);
+    bool EraseStakingAddress();
     //! Both needed to undo encryption; there was no way to remove either record.
     bool EraseMasterKey(unsigned int nID);
     bool EraseCryptedKey(const CPubKey& vchPubKey);

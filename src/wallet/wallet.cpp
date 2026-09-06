@@ -2454,6 +2454,14 @@ void CWallet::AvailableCoins(std::vector<COutput>& vCoins, bool fOnlySafe, const
     if (!fIncludeDelegated && (coinControl && coinControl->HasSelected()))
         fIncludeDelegated = true;
 
+    // Delegated coins are opt-in to spend because spending one normally breaks a
+    // delegation the user set up deliberately. Under auto-delegation the wallet made
+    // that delegation itself and puts the change straight back into another one, so
+    // there is nothing to break -- and every coin is delegated, so leaving them out
+    // would show an empty wallet.
+    if (!fIncludeDelegated && IsAutoDelegating())
+        fIncludeDelegated = true;
+
     std::set<uint256> trusted_parents;
     for (const auto& entry : mapWallet)
     {
@@ -3209,6 +3217,13 @@ bool CWallet::CreateTransactionInternal(
             // coin control: send change to custom address
             if (!boost::get<CNoDestination>(&coin_control.destChange)) {
                 scriptChange = GetScriptForDestination(coin_control.destChange);
+            } else if (!(scriptChange = GetDelegatedChangeScript()).empty()) {
+                // Auto-delegation: the remainder goes back into a delegation of its own.
+                // Plain change would leave everything but the amount sent sitting on an
+                // ordinary address, no longer staking and needing a manual delegation to
+                // get back -- so a single spend would quietly stop the wallet staking.
+                // The key is kept rather than returned to the pool below, same as any
+                // other change destination.
             } else { // no coin control: send change to newly generated address
                 // Note: We use a new key here to keep it from being obvious which side is the change.
                 //  The drawback is that by not reusing a previous key, the change may be lost if a
@@ -5510,6 +5525,44 @@ void CWallet::SetStakingEnabledSetting(bool enabled)
         WalletLogPrintf("Failed to record staking=%s in the wallet; it will not survive a restart\n",
                         enabled ? "true" : "false");
     }
+}
+
+bool CWallet::SetStakingAddress(const Optional<CKeyID>& staker)
+{
+    AssertLockHeld(cs_wallet);
+    WalletBatch batch(*database);
+    if (!(staker ? batch.WriteStakingAddress(uint160(*staker)) : batch.EraseStakingAddress())) {
+        WalletLogPrintf("Failed to record the staking address in the wallet\n");
+        return false;
+    }
+    m_staking_address = staker;
+    return true;
+}
+
+bool CWallet::IsAutoDelegating() const
+{
+    AssertLockHeld(cs_wallet);
+    return m_staking_address.has_value() && gArgs.GetBoolArg("-coldstaking", DEFAULT_COLDSTAKING);
+}
+
+CScript CWallet::GetDelegatedChangeScript()
+{
+    AssertLockHeld(cs_wallet);
+    if (!IsAutoDelegating()) return CScript();
+
+    // A fresh owner key each time, for the same reason ordinary change takes one: the
+    // change output should not be the obvious one. The staker half is deliberately the
+    // same every time -- one staking key covers every output naming it.
+    CTxDestination owner;
+    std::string unused_error;
+    if (!GetNewDestination(OutputType::LEGACY, "", owner, unused_error)) return CScript();
+    const PKHash* owner_hash = boost::get<PKHash>(&owner);
+    if (!owner_hash) return CScript();
+
+    const CScript script = GetScriptForStakeDelegation(*m_staking_address, ToKeyID(*owner_hash));
+    // Watch the script so the change is recognised on the way back in without a rescan.
+    if (auto* spk_man = GetLegacyScriptPubKeyMan()) spk_man->AddCScript(script);
+    return script;
 }
 
 void CWallet::StopStake()

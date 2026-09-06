@@ -43,6 +43,7 @@ const std::string NAME{"name"};
 const std::string OLD_KEY{"wkey"};
 const std::string ORDERPOSNEXT{"orderposnext"};
 const std::string STAKINGENABLED{"stakingenabled"};
+const std::string STAKINGADDRESS{"stakingaddress"};
 const std::string POOL{"pool"};
 const std::string PURPOSE{"purpose"};
 const std::string SETTINGS{"settings"};
@@ -143,6 +144,16 @@ bool WalletBatch::WriteCryptedKey(const CPubKey& vchPubKey,
 bool WalletBatch::WriteStakingEnabled(bool enabled)
 {
     return WriteIC(DBKeys::STAKINGENABLED, enabled);
+}
+
+bool WalletBatch::WriteStakingAddress(const uint160& staker)
+{
+    return WriteIC(DBKeys::STAKINGADDRESS, staker);
+}
+
+bool WalletBatch::EraseStakingAddress()
+{
+    return EraseIC(DBKeys::STAKINGADDRESS);
 }
 
 bool WalletBatch::WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey)
@@ -559,6 +570,10 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             bool enabled;
             ssValue >> enabled;
             pwallet->m_staking_enabled_setting = enabled;
+        } else if (strType == DBKeys::STAKINGADDRESS) {
+            uint160 staker;
+            ssValue >> staker;
+            pwallet->m_staking_address = CKeyID(staker);
         } else if (strType == DBKeys::ORDERPOSNEXT) {
             ssValue >> pwallet->nOrderPosNext;
         } else if (strType == DBKeys::DESTDATA) {

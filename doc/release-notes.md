@@ -54,11 +54,52 @@ wallet accumulates its own fees instead of stranding them.
 Staking is remembered per wallet across restarts. -staking remains the gate, so
 -staking=0 still wins, and the per-wallet record then decides which wallets stake.
 A wallet with no record keeps staking, so upgrading does not silently stop anyone.
-Staking no longer starts on a locked wallet, which previously left a node reporting
-that it was staking while unable to sign anything.
+Staking starts on a locked wallet too. The staker waits on the lock instead of
+spinning, so it begins the moment the wallet is unlocked; refusing to start meant an
+encrypted wallet came back from a restart with staking off whatever the user had
+chosen. Locking a wallet no longer tears the staking thread down, which had left the
+switch off after the passphrase prompt from an ordinary send.
 
 Descriptor wallets can now stake. Cold staking still requires a legacy wallet, as
 no descriptor can express a P2CS script.
+
+Delegation addresses
+====================
+
+Cold staking used to be something the owner arranged after the fact: coins arrived
+on an ordinary address, and a separate delegatestake transaction moved them into a
+cold-stake output. Every deposit needed that step, and the step needed the
+passphrase, so a wallet only stayed fully staked if somebody kept doing it.
+
+A delegation address encodes both keys, so the sender's wallet builds the cold-stake
+output directly. Coins are staking from the moment they arrive, with no second
+transaction and no passphrase. They are base58 like any other address here, but the
+payload is two key hashes rather than one, so they are longer and a wallet that does
+not know the type rejects them rather than misreading them -- do not expect an
+exchange to pay one.
+
+- getdelegationaddress ( "staker_address" "owner_address" ) returns one. The staker
+  half is whatever key is to do the staking; the owner half defaults to a fresh key
+  from this wallet, so repeated calls hand out different addresses that the same
+  staking wallet still covers.
+
+- setstakingaddress "address" records the staking key a wallet delegates its own
+  coins to, and turns on auto-delegation. getdelegationaddress then needs no
+  argument, and change from any spend goes back into a delegation instead of landing
+  on a plain address. Without that, paying anyone would leave the entire remainder
+  undelegated and no longer staking, which is the sort of thing nobody notices until
+  the rewards stop. Pass "" to switch it off.
+
+While auto-delegation is on, delegated coins are spent like any other: they count
+towards the balance and coin selection reaches for them without being asked. That is
+normally opt-in, because spending a delegated coin breaks a delegation the owner set
+up deliberately -- here the wallet made the delegation itself and puts the change
+straight back into another one. The setting is stored per wallet and survives a
+restart. getwalletinfo reports it as staking_address.
+
+Sending to and receiving from ordinary addresses therefore works as it always did,
+without taking the wallet out of staking. Coins still have to reach 500 confirmations
+before they can stake, as every output on this chain does.
 
 Fixes
 =====

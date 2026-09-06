@@ -150,6 +150,8 @@ BASE_SCRIPTS = [
     'wallet_coldstaking.py',
     'wallet_decrypt.py',
     'wallet_staking_rotation.py',
+    'wallet_delegation_address.py',
+    'wallet_auto_delegation.py',
     'wallet_coldstaking_passwordless.py',
     'wallet_coldstaking_compound.py',
     'wallet_staking_toggle.py',

@@ -1110,6 +1110,26 @@ public:
     //! thread is running right now" and is reported by getstakinginfo.
     Optional<bool> m_staking_enabled_setting;
 
+    //! The staking key this wallet hands its own coins to. Setting it turns on
+    //! auto-delegation: receiving addresses can be minted as delegation addresses,
+    //! and change from any spend comes back delegated to this key instead of
+    //! landing on a plain address and quietly dropping out of staking.
+    //! nullopt means the wallet delegates nothing by itself, which is how every
+    //! wallet written before this record behaves.
+    Optional<CKeyID> m_staking_address;
+
+    //! Record (or, with nullopt, forget) the staking key in the wallet file.
+    bool SetStakingAddress(const Optional<CKeyID>& staker) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    //! True when this wallet delegates its own coins without being asked. Cold staking
+    //! switched off at the node level disables it: the outputs would not be stakeable.
+    bool IsAutoDelegating() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    //! The script a delegation address for this wallet's staking key resolves to, with
+    //! a fresh owner key taken from the keypool. Empty if auto-delegation is off or no
+    //! key could be taken.
+    CScript GetDelegatedChangeScript() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
     //! Record the user's staking choice in the wallet file. Not called at startup, only
     //! when the user actually changes it.
     void SetStakingEnabledSetting(bool enabled);

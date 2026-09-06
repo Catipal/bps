@@ -513,6 +513,11 @@ public:
     {
         return m_wallet->m_enabled_staking;
     }
+    bool isAutoDelegating() override
+    {
+        LOCK(m_wallet->cs_wallet);
+        return m_wallet->IsAutoDelegating();
+    }
 
     std::unique_ptr<Handler> handleUnload(UnloadFn fn) override
     {

@@ -168,6 +168,13 @@ void SendCoinsDialog::setModel(WalletModel *_model)
         connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &SendCoinsDialog::updateDisplayUnit);
         updateDisplayUnit();
         connect(ui->checkboxIncludeDelegations, &QCheckBox::stateChanged, this, &SendCoinsDialog::updateBalanceWithDelegations);
+        if (_model->wallet().isAutoDelegating()) {
+            // The wallet delegates its own coins, so all of them are delegated. Leaving
+            // this unticked would show an empty balance and refuse every send.
+            ui->checkboxIncludeDelegations->setChecked(true);
+            ui->checkboxIncludeDelegations->setEnabled(false);
+            ui->checkboxIncludeDelegations->setToolTip(tr("This wallet stakes its own coins, so they are all delegated."));
+        }
 
         // Coin Control
         connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &SendCoinsDialog::coinControlUpdateLabels);
