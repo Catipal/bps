@@ -72,6 +72,21 @@ StakePage::StakePage(const PlatformStyle *_platformStyle, QWidget *parent) :
 
     ui->autoStakerPasteButton->setIcon(platformStyle->SingleColorIcon(":/icons/editpaste"));
     GUIUtil::setupAddressWidget(ui->autoStakerAddress, this);
+    ui->frameAutoDelegation->setToolTip(
+        tr("Coins paid to this wallet's delegation addresses are staked by these keys the "
+           "moment they arrive, and change from your own spends stays delegated. A staking "
+           "key can only produce coinstakes that pay back to you, so the wallet holding it "
+           "does not need a passphrase."));
+    ui->stakingAddressList->setToolTip(
+        tr("List more than one to spread your coins over several staking wallets, so one of "
+           "them being offline does not stop everything staking. Each new delegation goes to "
+           "whichever address has the fewest to its name already."));
+    const QString keep = tr("Coins already delegated to a removed address are not moved and it "
+                            "keeps staking them. Only new delegations stop naming it.");
+    ui->autoDelegationRemoveButton->setToolTip(keep);
+    ui->autoDelegationClearButton->setToolTip(keep);
+    connect(ui->stakingAddressList, &QListWidget::itemSelectionChanged,
+            this, &StakePage::updateStakingAddressButtons);
 }
 
 StakePage::~StakePage()
@@ -327,27 +342,31 @@ void StakePage::syncAutoDelegation()
     for (const std::string& staker : stakers) {
         ui->stakingAddressList->addItem(QString::fromStdString(staker));
     }
-    ui->autoDelegationClearButton->setEnabled(!stakers.empty());
-    ui->autoDelegationRemoveButton->setEnabled(!stakers.empty());
+    updateStakingAddressButtons();
 
     if (on) {
         ui->labelAutoDelegationStatus->setText(
             stakers.size() == 1
-                ? tr("On. Coins received at this wallet's delegation addresses stake "
-                     "automatically, and change stays delegated.")
-                : tr("On, across %1 staking addresses. Each new delegation goes to whichever of "
-                     "them has the fewest to its name already.").arg(stakers.size()));
+                ? tr("On. Coins sent to this wallet's delegation addresses stake on arrival.")
+                : tr("On, spread across %1 addresses. Each new delegation goes to the one with "
+                     "the fewest to its name.").arg(stakers.size()));
     } else if (!stakers.empty()) {
         // The record is there but cold staking is switched off for the node, so the
         // outputs would not be stakeable. Saying "on" here would be a lie.
         ui->labelAutoDelegationStatus->setText(
-            tr("Staking addresses are set, but cold staking is disabled on this node "
-               "(-coldstaking=0), so nothing is being delegated."));
+            tr("Cold staking is disabled on this node (-coldstaking=0), so nothing is "
+               "being delegated."));
     } else {
         ui->labelAutoDelegationStatus->setText(
-            tr("Off. Delegation addresses are unavailable and change goes to ordinary "
-               "addresses, which do not stake."));
+            tr("Off. Add an address to stake coins as they arrive; until then change goes "
+               "to ordinary addresses, which do not stake."));
     }
+}
+
+void StakePage::updateStakingAddressButtons()
+{
+    ui->autoDelegationRemoveButton->setEnabled(!ui->stakingAddressList->selectedItems().isEmpty());
+    ui->autoDelegationClearButton->setEnabled(ui->stakingAddressList->count() > 0);
 }
 
 void StakePage::applyStakingAddresses(const std::vector<std::string>& addresses)

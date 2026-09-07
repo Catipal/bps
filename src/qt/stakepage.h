@@ -55,6 +55,8 @@ private:
     void syncStakingSwitch();
     //! Match the Delegate tab's automatic page to what the wallet has recorded.
     void syncAutoDelegation();
+    //! Remove acts on a selection, Remove all on the list; grey each out accordingly.
+    void updateStakingAddressButtons();
     //! Write a staking address list, reporting failure rather than leaving the page
     //! claiming something the wallet did not record.
     void applyStakingAddresses(const std::vector<std::string>& addresses);
