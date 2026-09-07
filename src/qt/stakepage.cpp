@@ -27,7 +27,10 @@
 #include <wallet/wallet.h>
 
 #include <QSortFilterProxyModel>
+#include <QApplication>
+#include <QClipboard>
 #include <QDialog>
+#include <QMessageBox>
 #include <QSignalBlocker>
 
 Q_DECLARE_METATYPE(interfaces::WalletBalances)
@@ -63,7 +66,10 @@ StakePage::StakePage(const PlatformStyle *_platformStyle, QWidget *parent) :
     myDelegationsView = new TransactionView(platformStyle, this, true, true);
     ui->frameTabMyDelegations->layout()->addWidget(myDelegationsView);
     sendCoinsDialog = new SendCoinsDialog(platformStyle, nullptr, true);
-    ui->tab_create_delegation->layout()->addWidget(sendCoinsDialog);
+    ui->pageManualDelegation->layout()->addWidget(sendCoinsDialog);
+
+    ui->autoStakerPasteButton->setIcon(platformStyle->SingleColorIcon(":/icons/editpaste"));
+    GUIUtil::setupAddressWidget(ui->autoStakerAddress, this);
 }
 
 StakePage::~StakePage()
@@ -108,6 +114,7 @@ void StakePage::setWalletModel(WalletModel *model)
         myDelegationsView->chooseType(7); // My delegations to others
 
         ui->checkStake->setChecked(model->wallet().getEnabledStaking());
+        syncAutoDelegation();
         // Nothing was watching this before, so the switch never noticed the wallet
         // being encrypted or locked from anywhere else in the UI.
         connect(model, &WalletModel::encryptionStatusChanged, this, &StakePage::updateEncryptionStatus);
@@ -305,6 +312,75 @@ void StakePage::on_newAddressButton_clicked()
         assert(false);
     }
     ui->newAddressLabel->setText("");
+}
+
+void StakePage::syncAutoDelegation()
+{
+    if (!walletModel) return;
+
+    const QString staker = QString::fromStdString(walletModel->wallet().getStakingAddress());
+    const bool on = walletModel->wallet().isAutoDelegating();
+    ui->autoStakerAddress->setText(staker);
+    ui->autoDelegationClearButton->setEnabled(!staker.isEmpty());
+
+    if (on) {
+        ui->labelAutoDelegationStatus->setText(
+            tr("On. Coins received at this wallet's delegation addresses stake automatically, "
+               "and change stays delegated."));
+    } else if (!staker.isEmpty()) {
+        // The record is there but cold staking is switched off for the node, so the
+        // outputs would not be stakeable. Saying "on" here would be a lie.
+        ui->labelAutoDelegationStatus->setText(
+            tr("A staking address is set, but cold staking is disabled on this node "
+               "(-coldstaking=0), so nothing is being delegated."));
+    } else {
+        ui->labelAutoDelegationStatus->setText(
+            tr("Off. Delegation addresses are unavailable and change goes to ordinary "
+               "addresses, which do not stake."));
+    }
+}
+
+void StakePage::on_delegationModeSelector_currentIndexChanged(int index)
+{
+    ui->delegationModeStack->setCurrentIndex(index);
+    if (index == 1) syncAutoDelegation();
+}
+
+void StakePage::on_autoStakerPasteButton_clicked()
+{
+    ui->autoStakerAddress->setText(QApplication::clipboard()->text());
+}
+
+void StakePage::on_autoDelegationApplyButton_clicked()
+{
+    if (!walletModel) return;
+
+    const QString staker = ui->autoStakerAddress->text().trimmed();
+    if (!walletModel->validateAddress(staker)) {
+        ui->autoStakerAddress->setValid(false);
+        return;
+    }
+
+    if (!walletModel->wallet().setStakingAddress(staker.toStdString())) {
+        // The address is valid but not one a P2CS script can name, or the record could
+        // not be written. Either way nothing changed, so say so rather than leaving the
+        // page claiming it is on.
+        QMessageBox::warning(this, tr("Automatic delegation"),
+            tr("Could not use that address. A delegation commits to a key hash, so the "
+               "staking address has to be a legacy address."),
+            QMessageBox::Ok, QMessageBox::Ok);
+        syncAutoDelegation();
+        return;
+    }
+    syncAutoDelegation();
+}
+
+void StakePage::on_autoDelegationClearButton_clicked()
+{
+    if (!walletModel) return;
+    // Coins already delegated stay delegated; this only stops new ones being made.
+    walletModel->wallet().setStakingAddress("");
+    syncAutoDelegation();
 }
 
 // ColdStake Control: settings menu - cold staker control enabled/disabled by user

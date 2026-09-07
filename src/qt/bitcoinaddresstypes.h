@@ -55,7 +55,8 @@ public:
     {
         LEGACY,
         NESTED_SEGWIT,
-        NATIVE_SEGWIT
+        NATIVE_SEGWIT,
+        DELEGATION
     };
 
     //! @name Static API

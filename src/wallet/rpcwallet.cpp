@@ -743,33 +743,30 @@ static RPCHelpMan getdelegationaddress()
     // The owner side defaults to a fresh key, so repeated calls do not hand out the
     // same address twice. The staker side is deliberately constant: one staking key
     // stakes every output naming it, whatever the owner key beside it.
-    CTxDestination owner_dest;
+    Optional<CKeyID> owner_id;
     if (request.params.size() > 1 && !request.params[1].isNull() && !request.params[1].get_str().empty()) {
-        owner_dest = DecodeDestination(request.params[1].get_str());
+        CTxDestination owner_dest = DecodeDestination(request.params[1].get_str());
         if (!IsValidDestination(owner_dest))
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid owner address");
-    } else {
-        if (!pwallet->CanGetAddresses())
-            throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
-        std::string error;
-        if (!pwallet->GetNewDestination(OutputType::LEGACY, "", owner_dest, error))
-            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, error);
+        const PKHash* owner = boost::get<PKHash>(&owner_dest);
+        if (!owner)
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "owner_address must be a legacy address, since the script commits to a key hash");
+        owner_id = ToKeyID(*owner);
+    } else if (!pwallet->CanGetAddresses()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error: This wallet has no available keys");
     }
-    const PKHash* owner = boost::get<PKHash>(&owner_dest);
-    if (!owner)
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "owner_address must be a legacy address, since the script commits to a key hash");
 
-    // Watch the script, so the wallet recognises payments to it without a rescan.
-    const CScript script = GetScriptForStakeDelegation(staker_id, ToKeyID(*owner));
-    LegacyScriptPubKeyMan& spk_man = EnsureLegacyScriptPubKeyMan(*pwallet, true);
-    spk_man.AddCScript(script);
+    EnsureLegacyScriptPubKeyMan(*pwallet, true);
+    CTxDestination dest;
+    if (!pwallet->GetDelegationDestination(staker_id, owner_id, "", dest))
+        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Could not generate a delegation address");
 
-    const ColdStakeDestination dest(uint160(staker_id), uint160(ToKeyID(*owner)));
+    const ColdStakeDestination& cold = boost::get<ColdStakeDestination>(dest);
 
     UniValue result(UniValue::VOBJ);
     result.pushKV("address", EncodeDestination(dest));
     result.pushKV("staker_address", EncodeDestination(PKHash(staker_id)));
-    result.pushKV("owner_address", EncodeDestination(owner_dest));
+    result.pushKV("owner_address", EncodeDestination(PKHash(CKeyID(cold.owner))));
     return result;
 },
     };

@@ -18,6 +18,7 @@ QList<BitcoinAddressTypes::AddressType> BitcoinAddressTypes::availableAddressTyp
     addressTypeList.append(LEGACY);
     addressTypeList.append(NESTED_SEGWIT);
     addressTypeList.append(NATIVE_SEGWIT);
+    addressTypeList.append(DELEGATION);
     return addressTypeList;
 }
 
@@ -28,6 +29,7 @@ bool BitcoinAddressTypes::valid(int addressType)
     case LEGACY:
     case NESTED_SEGWIT:
     case NATIVE_SEGWIT:
+    case DELEGATION:
         return true;
     default:
         return false;
@@ -41,6 +43,7 @@ QString BitcoinAddressTypes::longName(int addressType)
     case LEGACY: return QString("Legacy");
     case NESTED_SEGWIT: return QString("Nested Segwit");
     case NATIVE_SEGWIT: return QString("Native Segwit");
+    case DELEGATION: return QString("Delegation");
     default: return QString("???");
     }
 }
@@ -57,6 +60,10 @@ QString BitcoinAddressTypes::description(int addressType)
     case LEGACY: return QString("Legacy bitcoin address. P2PKH");
     case NESTED_SEGWIT: return QString("Nested Segwit address. P2SH");
     case NATIVE_SEGWIT: return QString("Native Segwit address. P2WPKH");
+    case DELEGATION: return QString("Coins sent here stake as soon as they arrive, "
+                                    "without a second transaction. Needs a staking "
+                                    "address, set on the Stake page's Delegate tab. "
+                                    "Only wallets that know this address type can pay it. P2CS");
     default: return QString("???");
     }
 }

@@ -44,6 +44,13 @@ class AutoDelegationTest(BitcoinTestFramework):
         self.nodes[0].createwallet(wallet_name=name, descriptors=False)
         return self.nodes[0].get_wallet_rpc(name)
 
+    def book(self, w):
+        """Receiving addresses the wallet has recorded, as the GUI's Receive tab lists them."""
+        try:
+            return set(w.getaddressesbylabel(""))
+        except Exception:
+            return set()
+
     def outs(self, w, txid, kind):
         tx = self.nodes[0].decoderawtransaction(w.gettransaction(txid)["hex"])
         return [o for o in tx["vout"] if o["scriptPubKey"]["type"] == kind]
@@ -75,6 +82,8 @@ class AutoDelegationTest(BitcoinTestFramework):
         deleg = user.getdelegationaddress()
         assert_equal(deleg["staker_address"], staker_addr)
         staker_hash = node.validateaddress(deleg["address"])["staker_pubkeyhash"]
+        # It is a receiving address like any other, so the GUI can list it.
+        assert deleg["address"] in self.book(user)
 
         self.log.info("Receiving from an ordinary address delegates on arrival")
         # The sender is a stock wallet paying a normal sendtoaddress; nothing about
@@ -98,6 +107,9 @@ class AutoDelegationTest(BitcoinTestFramework):
         change = self.outs(user, spend, "coldstake")
         assert_equal(len(change), 1)
         assert staker_hash in change[0]["scriptPubKey"]["asm"]
+        # Change is not an address anybody asked for, so it stays out of the address
+        # book -- otherwise every spend would add a line to the Receive tab.
+        assert_equal(self.book(user), {deleg["address"]})
         # Nothing dropped out of staking: the balance moved, the delegation did not.
         info = user.getwalletinfo()
         assert_greater_than(info["delegated"], Decimal("989"))

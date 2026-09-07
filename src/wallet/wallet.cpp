@@ -3174,7 +3174,10 @@ bool CWallet::CreateTransactionInternal(
         bool fIncludeDelegated)
 {
     CAmount nValue = 0;
-    const OutputType change_type = TransactionChangeType(coin_control.m_change_type ? *coin_control.m_change_type : m_default_change_type, vecSend);
+    OutputType change_type = TransactionChangeType(coin_control.m_change_type ? *coin_control.m_change_type : m_default_change_type, vecSend);
+    // A P2CS script commits to key hashes, so the owner half of delegated change has to
+    // be a legacy key whatever the wallet would otherwise use.
+    if (WITH_LOCK(cs_wallet, return IsAutoDelegating())) change_type = OutputType::LEGACY;
     ReserveDestination reservedest(this, change_type);
     int nChangePosRequest = nChangePosInOut;
     unsigned int nSubtractFeeFromAmount = 0;
@@ -3217,13 +3220,6 @@ bool CWallet::CreateTransactionInternal(
             // coin control: send change to custom address
             if (!boost::get<CNoDestination>(&coin_control.destChange)) {
                 scriptChange = GetScriptForDestination(coin_control.destChange);
-            } else if (!(scriptChange = GetDelegatedChangeScript()).empty()) {
-                // Auto-delegation: the remainder goes back into a delegation of its own.
-                // Plain change would leave everything but the amount sent sitting on an
-                // ordinary address, no longer staking and needing a manual delegation to
-                // get back -- so a single spend would quietly stop the wallet staking.
-                // The key is kept rather than returned to the pool below, same as any
-                // other change destination.
             } else { // no coin control: send change to newly generated address
                 // Note: We use a new key here to keep it from being obvious which side is the change.
                 //  The drawback is that by not reusing a previous key, the change may be lost if a
@@ -3238,7 +3234,13 @@ bool CWallet::CreateTransactionInternal(
                 if (!reservedest.GetReservedDestination(dest, true)) {
                     error = _("Transaction needs a change address, but we can't generate it. Please call keypoolrefill first.");
                 }
-                scriptChange = GetScriptForDestination(dest);
+                // Auto-delegation: the remainder goes back into a delegation of its own,
+                // built from the same reserved key. Plain change would leave everything
+                // but the amount sent sitting on an ordinary address, no longer staking
+                // and needing a manual delegation to get back, so a single spend would
+                // quietly stop the wallet staking.
+                scriptChange = GetDelegatedChangeScript(dest);
+                if (scriptChange.empty()) scriptChange = GetScriptForDestination(dest);
                 // A valid destination implies a change script (and
                 // vice-versa). An empty change script will abort later, if the
                 // change keypool ran out, but change is required.
@@ -5545,23 +5547,60 @@ bool CWallet::IsAutoDelegating() const
     return m_staking_address.has_value() && gArgs.GetBoolArg("-coldstaking", DEFAULT_COLDSTAKING);
 }
 
-CScript CWallet::GetDelegatedChangeScript()
+bool CWallet::GetDelegationDestination(const CKeyID& staker, const Optional<CKeyID>& owner, const std::string& label, CTxDestination& dest, bool record)
+{
+    AssertLockHeld(cs_wallet);
+
+    CKeyID owner_id;
+    if (owner) {
+        owner_id = *owner;
+    } else {
+        // A fresh owner key, so repeated receiving addresses differ. The staker half is
+        // deliberately whatever was asked for -- one staking key covers every output
+        // naming it, which is what lets a single staking wallet look after all of them.
+        // Taken from the key manager directly rather than through GetNewDestination,
+        // which would file the bare owner address in the address book: it would show up
+        // in the wallet's receiving addresses, and anything paid to it would not be
+        // delegated at all.
+        auto* owner_spk_man = GetScriptPubKeyMan(OutputType::LEGACY, /* internal */ false);
+        if (!owner_spk_man) return false;
+        owner_spk_man->TopUp();
+        CTxDestination owner_dest;
+        std::string unused_error;
+        if (!owner_spk_man->GetNewDestination(OutputType::LEGACY, owner_dest, unused_error)) return false;
+        const PKHash* owner_hash = boost::get<PKHash>(&owner_dest);
+        if (!owner_hash) return false;
+        owner_id = ToKeyID(*owner_hash);
+    }
+
+    // Watch the script, so payments to it are recognised without a rescan.
+    auto* spk_man = GetLegacyScriptPubKeyMan();
+    if (!spk_man || !spk_man->AddCScript(GetScriptForStakeDelegation(staker, owner_id))) return false;
+
+    dest = ColdStakeDestination(uint160(staker), uint160(owner_id));
+    if (record) SetAddressBook(dest, label, "receive");
+    return true;
+}
+
+bool CWallet::GetNewDelegationDestination(const std::string& label, CTxDestination& dest, bool record)
+{
+    AssertLockHeld(cs_wallet);
+    if (!IsAutoDelegating()) return false;
+    return GetDelegationDestination(*m_staking_address, nullopt, label, dest, record);
+}
+
+CScript CWallet::GetDelegatedChangeScript(const CTxDestination& owner)
 {
     AssertLockHeld(cs_wallet);
     if (!IsAutoDelegating()) return CScript();
 
-    // A fresh owner key each time, for the same reason ordinary change takes one: the
-    // change output should not be the obvious one. The staker half is deliberately the
-    // same every time -- one staking key covers every output naming it.
-    CTxDestination owner;
-    std::string unused_error;
-    if (!GetNewDestination(OutputType::LEGACY, "", owner, unused_error)) return CScript();
     const PKHash* owner_hash = boost::get<PKHash>(&owner);
     if (!owner_hash) return CScript();
 
     const CScript script = GetScriptForStakeDelegation(*m_staking_address, ToKeyID(*owner_hash));
-    // Watch the script so the change is recognised on the way back in without a rescan.
-    if (auto* spk_man = GetLegacyScriptPubKeyMan()) spk_man->AddCScript(script);
+    // Watch it, so the change is recognised on the way back in without a rescan.
+    auto* spk_man = GetLegacyScriptPubKeyMan();
+    if (!spk_man || !spk_man->AddCScript(script)) return CScript();
     return script;
 }
 

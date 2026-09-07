@@ -153,16 +153,29 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
     QString address;
     QString label = ui->reqLabel->text();
     /* Generate new receiving address */
-    OutputType address_type;
+    OutputType address_type = OutputType::LEGACY;
     BitcoinAddressType address_type_selected = (BitcoinAddressType)ui->addressTypeSelector->currentIndex();
-    if (BitcoinAddressType::NATIVE_SEGWIT == address_type_selected) {
-        address_type = OutputType::BECH32;
-    } else if (BitcoinAddressType::NESTED_SEGWIT == address_type_selected) {
-        address_type = OutputType::P2SH_SEGWIT;
+    if (BitcoinAddressType::DELEGATION == address_type_selected) {
+        // A delegation address names a staking key, so there has to be one. Nothing
+        // else here can pick it: it belongs to the wallet that will do the staking,
+        // which is normally a different wallet from this one.
+        if (!model->wallet().isAutoDelegating()) {
+            QMessageBox::warning(this, windowTitle(),
+                tr("No staking address is set for this wallet, so there is nothing to "
+                   "delegate to. Set one on the Stake page, under Delegate -> Automatic "
+                   "delegation, and this address type will work."),
+                QMessageBox::Ok, QMessageBox::Ok);
+            return;
+        }
+        address = model->getAddressTableModel()->addRow(AddressTableModel::ReceiveDelegation, label, "", address_type);
     } else {
-        address_type = OutputType::LEGACY;
+        if (BitcoinAddressType::NATIVE_SEGWIT == address_type_selected) {
+            address_type = OutputType::BECH32;
+        } else if (BitcoinAddressType::NESTED_SEGWIT == address_type_selected) {
+            address_type = OutputType::P2SH_SEGWIT;
+        }
+        address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", address_type);
     }
-    address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", address_type);
 
     switch(model->getAddressTableModel()->getEditStatus())
     {

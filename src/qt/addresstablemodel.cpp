@@ -19,6 +19,7 @@
 
 const QString AddressTableModel::Send = "S";
 const QString AddressTableModel::Receive = "R";
+const QString AddressTableModel::ReceiveDelegation = "D";
 
 struct AddressTableEntry
 {
@@ -413,6 +414,19 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
                 editStatus = KEY_GENERATION_FAILURE;
                 return QString();
             }
+        }
+        strAddress = EncodeDestination(dest);
+    }
+    else if(type == ReceiveDelegation)
+    {
+        // Both halves are minted here: the staking key the wallet is set to delegate
+        // to, and a fresh owner key. Unlike an ordinary receiving address this needs
+        // no unlock -- the keypool supplies the owner key.
+        CTxDestination dest;
+        if(!walletModel->wallet().getNewDelegationDestination(strLabel, dest))
+        {
+            editStatus = KEY_GENERATION_FAILURE;
+            return QString();
         }
         strAddress = EncodeDestination(dest);
     }

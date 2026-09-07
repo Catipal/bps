@@ -545,6 +545,187 @@
                             <property name="bottomMargin">
                                 <number>0</number>
                             </property>
+                            <item>
+                                <layout class="QHBoxLayout" name="layoutDelegationMode">
+                                    <property name="leftMargin">
+                                        <number>12</number>
+                                    </property>
+                                    <property name="topMargin">
+                                        <number>12</number>
+                                    </property>
+                                    <property name="rightMargin">
+                                        <number>12</number>
+                                    </property>
+                                    <item>
+                                        <widget class="QLabel" name="labelDelegationMode">
+                                            <property name="text">
+                                                <string>Delegation type:</string>
+                                            </property>
+                                        </widget>
+                                    </item>
+                                    <item>
+                                        <widget class="QComboBox" name="delegationModeSelector">
+                                            <property name="sizeAdjustPolicy">
+                                                <enum>QComboBox::AdjustToContents</enum>
+                                            </property>
+                                            <item>
+                                                <property name="text">
+                                                    <string>Manual delegation</string>
+                                                </property>
+                                            </item>
+                                            <item>
+                                                <property name="text">
+                                                    <string>Automatic delegation</string>
+                                                </property>
+                                            </item>
+                                        </widget>
+                                    </item>
+                                    <item>
+                                        <spacer name="spacerDelegationMode">
+                                            <property name="orientation">
+                                                <enum>Qt::Horizontal</enum>
+                                            </property>
+                                            <property name="sizeHint" stdset="0">
+                                                <size>
+                                                    <width>40</width>
+                                                    <height>20</height>
+                                                </size>
+                                            </property>
+                                        </spacer>
+                                    </item>
+                                </layout>
+                            </item>
+                            <item>
+                                <widget class="QStackedWidget" name="delegationModeStack">
+                                    <property name="currentIndex">
+                                        <number>0</number>
+                                    </property>
+                                    <widget class="QWidget" name="pageManualDelegation">
+                                        <layout class="QVBoxLayout" name="layoutManualDelegation">
+                                            <property name="spacing">
+                                                <number>0</number>
+                                            </property>
+                                            <property name="leftMargin">
+                                                <number>0</number>
+                                            </property>
+                                            <property name="topMargin">
+                                                <number>0</number>
+                                            </property>
+                                            <property name="rightMargin">
+                                                <number>0</number>
+                                            </property>
+                                            <property name="bottomMargin">
+                                                <number>0</number>
+                                            </property>
+                                        </layout>
+                                    </widget>
+                                    <widget class="QWidget" name="pageAutoDelegation">
+                                        <layout class="QVBoxLayout" name="layoutAutoDelegation">
+                                            <property name="leftMargin">
+                                                <number>12</number>
+                                            </property>
+                                            <property name="topMargin">
+                                                <number>12</number>
+                                            </property>
+                                            <property name="rightMargin">
+                                                <number>12</number>
+                                            </property>
+                                            <item>
+                                                <widget class="QLabel" name="labelAutoDelegationHelp">
+                                                    <property name="text">
+                                                        <string>Manual delegation moves coins you already hold into a delegation, one transaction at a time. Automatic delegation instead tells this wallet which staking key to use from now on: the Receive tab can then hand out delegation addresses, whose coins stake as soon as they arrive, and change from your own spends stays delegated instead of dropping out of staking.
+
+The staking key can only produce coinstakes that pay back to you. It cannot spend your coins, so the wallet holding it does not need a passphrase.
+
+Coins you already hold are not moved. Use manual delegation, or the rotatestakingkey RPC, for those.</string>
+                                                    </property>
+                                                    <property name="wordWrap">
+                                                        <bool>true</bool>
+                                                    </property>
+                                                </widget>
+                                            </item>
+                                            <item>
+                                                <layout class="QHBoxLayout" name="layoutAutoStaker">
+                                                    <item>
+                                                        <widget class="QLabel" name="labelAutoStakerAddress">
+                                                            <property name="text">
+                                                                <string>Staking address:</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QValidatedLineEdit" name="autoStakerAddress"/>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QPushButton" name="autoStakerPasteButton">
+                                                            <property name="toolTip">
+                                                                <string>Paste address from clipboard</string>
+                                                            </property>
+                                                            <property name="text">
+                                                                <string/>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                </layout>
+                                            </item>
+                                            <item>
+                                                <layout class="QHBoxLayout" name="layoutAutoButtons">
+                                                    <item>
+                                                        <widget class="QPushButton" name="autoDelegationApplyButton">
+                                                            <property name="text">
+                                                                <string>&amp;Enable automatic delegation</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QPushButton" name="autoDelegationClearButton">
+                                                            <property name="text">
+                                                                <string>&amp;Disable</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <spacer name="spacerAutoButtons">
+                                                            <property name="orientation">
+                                                                <enum>Qt::Horizontal</enum>
+                                                            </property>
+                                                            <property name="sizeHint" stdset="0">
+                                                                <size>
+                                                                    <width>40</width>
+                                                                    <height>20</height>
+                                                                </size>
+                                                            </property>
+                                                        </spacer>
+                                                    </item>
+                                                </layout>
+                                            </item>
+                                            <item>
+                                                <widget class="QLabel" name="labelAutoDelegationStatus">
+                                                    <property name="text">
+                                                        <string/>
+                                                    </property>
+                                                    <property name="wordWrap">
+                                                        <bool>true</bool>
+                                                    </property>
+                                                </widget>
+                                            </item>
+                                            <item>
+                                                <spacer name="spacerAutoDelegation">
+                                                    <property name="orientation">
+                                                        <enum>Qt::Vertical</enum>
+                                                    </property>
+                                                    <property name="sizeHint" stdset="0">
+                                                        <size>
+                                                            <width>20</width>
+                                                            <height>40</height>
+                                                        </size>
+                                                    </property>
+                                                </spacer>
+                                            </item>
+                                        </layout>
+                                    </widget>
+                                </widget>
+                            </item>
                         </layout>
                     </widget>
                     <widget class="QWidget" name="tab_my_delegations">
@@ -752,6 +933,11 @@
             <class>QSwitchControl</class>
             <extends>QCheckBox</extends>
             <header>qt/qswitchcontrol.h</header>
+        </customwidget>
+        <customwidget>
+            <class>QValidatedLineEdit</class>
+            <extends>QLineEdit</extends>
+            <header>qt/qvalidatedlineedit.h</header>
         </customwidget>
     </customwidgets>
     <resources/>

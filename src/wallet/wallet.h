@@ -1125,10 +1125,20 @@ public:
     //! switched off at the node level disables it: the outputs would not be stakeable.
     bool IsAutoDelegating() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
-    //! The script a delegation address for this wallet's staking key resolves to, with
-    //! a fresh owner key taken from the keypool. Empty if auto-delegation is off or no
-    //! key could be taken.
-    CScript GetDelegatedChangeScript() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! A receiving address naming both keys, so coins paid to it are cold-staked on
+    //! arrival. A nullopt owner takes a fresh key from the keypool, which is what makes
+    //! repeated calls hand out different addresses. record=false leaves it out of the
+    //! address book, as change wants.
+    bool GetDelegationDestination(const CKeyID& staker, const Optional<CKeyID>& owner, const std::string& label, CTxDestination& dest, bool record = true) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    //! The same, for the staking key this wallet is set to delegate to. Fails if
+    //! auto-delegation is off.
+    bool GetNewDelegationDestination(const std::string& label, CTxDestination& dest, bool record = true) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    //! The delegation script pairing this wallet's staking key with an owner key it
+    //! already has -- for change, whose owner key comes from the usual change reserve
+    //! rather than being minted here. Empty if auto-delegation is off.
+    CScript GetDelegatedChangeScript(const CTxDestination& owner) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     //! Record the user's staking choice in the wallet file. Not called at startup, only
     //! when the user actually changes it.

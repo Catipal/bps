@@ -101,6 +101,11 @@ Sending to and receiving from ordinary addresses therefore works as it always di
 without taking the wallet out of staking. Coins still have to reach 500 confirmations
 before they can stake, as every output on this chain does.
 
+In the GUI, the Receive tab's address type menu gains a Delegation entry, and the
+Stake page's Delegate tab now asks which kind of delegation you want: Manual, which
+is the form that was always there, or Automatic, which is where the staking address
+is set. Picking Delegation without one explains where to set it rather than failing.
+
 Fixes
 =====
 

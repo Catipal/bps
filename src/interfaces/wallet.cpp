@@ -518,6 +518,27 @@ public:
         LOCK(m_wallet->cs_wallet);
         return m_wallet->IsAutoDelegating();
     }
+    std::string getStakingAddress() override
+    {
+        LOCK(m_wallet->cs_wallet);
+        if (!m_wallet->m_staking_address) return {};
+        return EncodeDestination(PKHash(*m_wallet->m_staking_address));
+    }
+    bool setStakingAddress(const std::string& address) override
+    {
+        LOCK(m_wallet->cs_wallet);
+        if (address.empty()) return m_wallet->SetStakingAddress(nullopt);
+        CTxDestination dest = DecodeDestination(address);
+        // A P2CS script commits to key hashes, so only a legacy address can name a staker.
+        const PKHash* hash = boost::get<PKHash>(&dest);
+        if (!hash) return false;
+        return m_wallet->SetStakingAddress(ToKeyID(*hash));
+    }
+    bool getNewDelegationDestination(const std::string& label, CTxDestination& dest) override
+    {
+        LOCK(m_wallet->cs_wallet);
+        return m_wallet->GetNewDelegationDestination(label, dest);
+    }
 
     std::unique_ptr<Handler> handleUnload(UnloadFn fn) override
     {

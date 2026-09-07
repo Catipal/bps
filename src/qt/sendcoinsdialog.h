@@ -47,6 +47,9 @@ public:
     void pasteEntry(const SendCoinsRecipient &rv);
     bool handlePaymentRequest(const SendCoinsRecipient &recipient);
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 public Q_SLOTS:
     void clear();
     void reject() override;
@@ -68,6 +71,10 @@ private:
     bool fFeeMinimized;
     const PlatformStyle *platformStyle;
     bool forDelegation;
+
+    //! Match the "include delegations" opt-in to whether the wallet delegates its own
+    //! coins, in which case there is nothing to opt in to.
+    void syncDelegationCheckbox();
 
     // Process WalletModel::SendCoinsReturn and generate a pair consisting
     // of a message and message flags for use in Q_EMIT message().

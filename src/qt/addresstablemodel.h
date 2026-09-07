@@ -50,6 +50,7 @@ public:
 
     static const QString Send;      /**< Specifies send address */
     static const QString Receive;   /**< Specifies receive address */
+    static const QString ReceiveDelegation;   /**< Specifies a receive address that delegates to the wallet's staking key */
 
     /** @name Methods overridden from QAbstractTableModel
         @{*/

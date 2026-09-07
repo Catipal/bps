@@ -168,13 +168,7 @@ void SendCoinsDialog::setModel(WalletModel *_model)
         connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &SendCoinsDialog::updateDisplayUnit);
         updateDisplayUnit();
         connect(ui->checkboxIncludeDelegations, &QCheckBox::stateChanged, this, &SendCoinsDialog::updateBalanceWithDelegations);
-        if (_model->wallet().isAutoDelegating()) {
-            // The wallet delegates its own coins, so all of them are delegated. Leaving
-            // this unticked would show an empty balance and refuse every send.
-            ui->checkboxIncludeDelegations->setChecked(true);
-            ui->checkboxIncludeDelegations->setEnabled(false);
-            ui->checkboxIncludeDelegations->setToolTip(tr("This wallet stakes its own coins, so they are all delegated."));
-        }
+        syncDelegationCheckbox();
 
         // Coin Control
         connect(_model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &SendCoinsDialog::coinControlUpdateLabels);
@@ -619,6 +613,31 @@ bool SendCoinsDialog::handlePaymentRequest(const SendCoinsRecipient &rv)
     // are done in paymentserver.cpp.
     pasteEntry(rv);
     return true;
+}
+
+void SendCoinsDialog::syncDelegationCheckbox()
+{
+    if (!model) return;
+
+    // With auto-delegation on, every coin the wallet holds is delegated. Leaving this
+    // opt-in unticked would show an empty balance and look like the wallet could not
+    // pay anyone, when the wallet is in fact perfectly able to spend them.
+    const bool auto_delegating = model->wallet().isAutoDelegating();
+    if (auto_delegating) {
+        ui->checkboxIncludeDelegations->setChecked(true);
+        ui->checkboxIncludeDelegations->setToolTip(tr("This wallet stakes its own coins, so they are all delegated."));
+    } else {
+        ui->checkboxIncludeDelegations->setToolTip(QString());
+    }
+    ui->checkboxIncludeDelegations->setEnabled(!auto_delegating);
+    setBalance(model->wallet().getBalances());
+}
+
+void SendCoinsDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    // Auto-delegation can be switched on from the Stake page while this tab is hidden.
+    syncDelegationCheckbox();
 }
 
 void SendCoinsDialog::setBalance(const interfaces::WalletBalances& balances)

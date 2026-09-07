@@ -53,6 +53,8 @@ Q_SIGNALS:
 private:
     //! Match the switch to the wallet's real staking state.
     void syncStakingSwitch();
+    //! Match the Delegate tab's automatic page to what the wallet has recorded.
+    void syncAutoDelegation();
 
     Ui::StakePage *ui;
     ClientModel *clientModel;
@@ -72,6 +74,10 @@ private Q_SLOTS:
     void on_checkStake_clicked(bool checked);
     void on_newAddressButton_clicked();
     void coldStakerControlFeaturesChanged(bool);
+    void on_delegationModeSelector_currentIndexChanged(int index);
+    void on_autoStakerPasteButton_clicked();
+    void on_autoDelegationApplyButton_clicked();
+    void on_autoDelegationClearButton_clicked();
 
 private:
     void updateSubsidy();
