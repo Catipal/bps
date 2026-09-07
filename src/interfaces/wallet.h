@@ -295,11 +295,11 @@ public:
     //! Whether the wallet delegates its own coins to a staking key without being asked.
     virtual bool isAutoDelegating() = 0;
 
-    //! The staking key this wallet delegates its own coins to, empty if none is set.
-    virtual std::string getStakingAddress() = 0;
+    //! The staking keys this wallet delegates its own coins to, empty if none is set.
+    virtual std::vector<std::string> getStakingAddresses() = 0;
 
-    //! Record the staking key, or forget it if the string is empty.
-    virtual bool setStakingAddress(const std::string& address) = 0;
+    //! Record the staking keys, or forget them if the list is empty.
+    virtual bool setStakingAddresses(const std::vector<std::string>& addresses) = 0;
 
     //! Get a receiving address that delegates to that staking key.
     virtual bool getNewDelegationDestination(const std::string& label, CTxDestination& dest) = 0;

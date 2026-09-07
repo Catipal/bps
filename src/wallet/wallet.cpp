@@ -5529,22 +5529,82 @@ void CWallet::SetStakingEnabledSetting(bool enabled)
     }
 }
 
-bool CWallet::SetStakingAddress(const Optional<CKeyID>& staker)
+bool CWallet::SetStakingAddresses(std::vector<CKeyID> stakers)
 {
     AssertLockHeld(cs_wallet);
+
+    // Keep the caller's order, drop repeats: the order decides ties in PickStakingKey,
+    // and a repeated entry would silently weight one key more heavily than the rest.
+    std::vector<CKeyID> unique;
+    std::vector<uint160> serialised;
+    for (const CKeyID& staker : stakers) {
+        if (std::find(unique.begin(), unique.end(), staker) != unique.end()) continue;
+        unique.push_back(staker);
+        serialised.push_back(uint160(staker));
+    }
+
     WalletBatch batch(*database);
-    if (!(staker ? batch.WriteStakingAddress(uint160(*staker)) : batch.EraseStakingAddress())) {
-        WalletLogPrintf("Failed to record the staking address in the wallet\n");
+    if (!(unique.empty() ? batch.EraseStakingAddresses() : batch.WriteStakingAddresses(serialised))) {
+        WalletLogPrintf("Failed to record the staking addresses in the wallet\n");
         return false;
     }
-    m_staking_address = staker;
+    m_staking_addresses = std::move(unique);
     return true;
 }
 
 bool CWallet::IsAutoDelegating() const
 {
     AssertLockHeld(cs_wallet);
-    return m_staking_address.has_value() && gArgs.GetBoolArg("-coldstaking", DEFAULT_COLDSTAKING);
+    return !m_staking_addresses.empty() && gArgs.GetBoolArg("-coldstaking", DEFAULT_COLDSTAKING);
+}
+
+Optional<CKeyID> CWallet::PickStakingKey() const
+{
+    AssertLockHeld(cs_wallet);
+    if (m_staking_addresses.empty()) return nullopt;
+    if (m_staking_addresses.size() == 1) return m_staking_addresses.front();
+
+    // Count what each key already has to its name. Two things count: the delegation
+    // addresses handed out, so several minted before any payment arrives do not all
+    // name the same key, and the unspent delegated outputs, so a key already holding
+    // coins is passed over in favour of one holding none. An address that has been
+    // paid therefore counts twice, which is the right way round -- new coins should
+    // go to the key looking after less.
+    // Value would be the fairer measure than a count, but it moves under the user as
+    // coins mature and are spent, whereas a count gives the same answer twice running.
+    std::map<CKeyID, size_t> held;
+    for (const CKeyID& staker : m_staking_addresses) held.emplace(staker, 0);
+
+    for (const auto& entry : m_address_book) {
+        const ColdStakeDestination* dest = boost::get<ColdStakeDestination>(&entry.first);
+        if (!dest) continue;
+        auto it = held.find(CKeyID(dest->staker));
+        if (it != held.end()) ++it->second;
+    }
+
+    for (const auto& entry : mapWallet) {
+        const CWalletTx& wtx = entry.second;
+        for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
+            const CScript& script = wtx.tx->vout[i].scriptPubKey;
+            if (!script.IsPayToColdStaking()) continue;
+            if (IsSpent(entry.first, i)) continue;
+            std::vector<std::vector<unsigned char>> solutions;
+            if (Solver(script, solutions) != TxoutType::COLDSTAKE) continue;
+            // vSolutions[0] is the staking key hash, [1] the owner's.
+            auto it = held.find(CKeyID(uint160(solutions[0])));
+            if (it != held.end()) ++it->second;
+        }
+    }
+
+    const CKeyID* best = &m_staking_addresses.front();
+    size_t fewest = held[*best];
+    for (const CKeyID& staker : m_staking_addresses) {
+        if (held[staker] < fewest) {
+            fewest = held[staker];
+            best = &staker;
+        }
+    }
+    return *best;
 }
 
 bool CWallet::GetDelegationDestination(const CKeyID& staker, const Optional<CKeyID>& owner, const std::string& label, CTxDestination& dest, bool record)
@@ -5586,7 +5646,9 @@ bool CWallet::GetNewDelegationDestination(const std::string& label, CTxDestinati
 {
     AssertLockHeld(cs_wallet);
     if (!IsAutoDelegating()) return false;
-    return GetDelegationDestination(*m_staking_address, nullopt, label, dest, record);
+    const Optional<CKeyID> staker = PickStakingKey();
+    if (!staker) return false;
+    return GetDelegationDestination(*staker, nullopt, label, dest, record);
 }
 
 CScript CWallet::GetDelegatedChangeScript(const CTxDestination& owner)
@@ -5597,7 +5659,10 @@ CScript CWallet::GetDelegatedChangeScript(const CTxDestination& owner)
     const PKHash* owner_hash = boost::get<PKHash>(&owner);
     if (!owner_hash) return CScript();
 
-    const CScript script = GetScriptForStakeDelegation(*m_staking_address, ToKeyID(*owner_hash));
+    const Optional<CKeyID> staker = PickStakingKey();
+    if (!staker) return CScript();
+
+    const CScript script = GetScriptForStakeDelegation(*staker, ToKeyID(*owner_hash));
     // Watch it, so the change is recognised on the way back in without a rescan.
     auto* spk_man = GetLegacyScriptPubKeyMan();
     if (!spk_man || !spk_man->AddCScript(script)) return CScript();

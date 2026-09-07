@@ -51,6 +51,11 @@ class AutoDelegationTest(BitcoinTestFramework):
         except Exception:
             return set()
 
+    def keyhash(self, addr):
+        """The key hash behind an ordinary address, without minting anything."""
+        # P2PKH: OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+        return self.nodes[0].validateaddress(addr)["scriptPubKey"][6:46]
+
     def outs(self, w, txid, kind):
         tx = self.nodes[0].decoderawtransaction(w.gettransaction(txid)["hex"])
         return [o for o in tx["vout"] if o["scriptPubKey"]["type"] == kind]
@@ -66,17 +71,17 @@ class AutoDelegationTest(BitcoinTestFramework):
         user = self.wallet("user")
 
         self.log.info("Setting a staking address turns auto-delegation on and is remembered")
-        assert_equal(user.getwalletinfo().get("staking_address"), None)
+        assert_equal(user.getwalletinfo().get("staking_addresses"), None)
         res = user.setstakingaddress(staker_addr)
-        assert_equal(res["staking_address"], staker_addr)
+        assert_equal(res["staking_addresses"], [staker_addr])
         assert_equal(res["auto_delegating"], True)
-        assert_equal(user.getwalletinfo()["staking_address"], staker_addr)
+        assert_equal(user.getwalletinfo()["staking_addresses"], [staker_addr])
 
         self.log.info("...and survives a wallet reload, so a restart keeps delegating")
         node.unloadwallet("user")
         node.loadwallet("user")
         user = node.get_wallet_rpc("user")
-        assert_equal(user.getwalletinfo()["staking_address"], staker_addr)
+        assert_equal(user.getwalletinfo()["staking_addresses"], [staker_addr])
 
         self.log.info("getdelegationaddress then needs no argument")
         deleg = user.getdelegationaddress()
@@ -121,9 +126,39 @@ class AutoDelegationTest(BitcoinTestFramework):
         # It holds none of it: only the owner can spend.
         assert_equal(staker.getbalances()["mine"]["trusted"], Decimal("0E-8"))
 
+        self.log.info("A second staking address spreads new delegations over both")
+        second_staker = self.wallet("staker2").getnewaddress()
+        added = user.addstakingaddress(second_staker)
+        assert_equal(added["staking_addresses"], [staker_addr, second_staker])
+        # Adding one already there is refused rather than silently duplicating it, which
+        # would weight that key twice in the choice below.
+        assert_equal(user.addstakingaddress(staker_addr)["staking_addresses"],
+                     [staker_addr, second_staker])
+
+        # The first staker starts two ahead: one address handed out, plus the delegated
+        # change from the spend above. So the second takes the next two, the third is a
+        # tie that goes to the first by list order, and the fourth swings back.
+        first_hash = self.keyhash(staker_addr)
+        second_hash = self.keyhash(second_staker)
+        assert first_hash != second_hash
+        used = [node.validateaddress(user.getdelegationaddress()["address"])["staker_pubkeyhash"]
+                for _ in range(4)]
+        assert_equal(used, [second_hash, second_hash, first_hash, second_hash])
+
+        self.log.info("...and removing one leaves the other, without moving any coins")
+        before = user.getwalletinfo()["delegated"]
+        removed = user.removestakingaddress(staker_addr)
+        assert_equal(removed["staking_addresses"], [second_staker])
+        assert_equal(user.getwalletinfo()["delegated"], before)
+        # Every new delegation now names the one that is left, even though it is the one
+        # already looking after more.
+        assert_equal(node.validateaddress(user.getdelegationaddress()["address"])["staker_pubkeyhash"],
+                     second_hash)
+        assert_raises_rpc_error(-8, "not one of this wallet", user.removestakingaddress, staker_addr)
+
         self.log.info("Switching it off stops the wallet reaching for delegated coins")
         assert_equal(user.setstakingaddress("")["auto_delegating"], False)
-        assert_equal(user.getwalletinfo().get("staking_address"), None)
+        assert_equal(user.getwalletinfo().get("staking_addresses"), None)
         assert_raises_rpc_error(-8, "setstakingaddress", user.getdelegationaddress)
         # This is what the wallet does with delegated coins by default, and the reason
         # auto-delegation has to override it: a wallet whose coins are all delegated
@@ -131,6 +166,7 @@ class AutoDelegationTest(BitcoinTestFramework):
         assert_raises_rpc_error(-6, "Insufficient funds", user.sendtoaddress, plain, 10)
         # Turning it back on makes them spendable again; nothing was stranded.
         user.setstakingaddress(staker_addr)
+        assert_equal(user.getwalletinfo()["staking_addresses"], [staker_addr])
         again = user.sendtoaddress(plain, 10)
         miner.generatetoaddress(1, plain)
         assert_equal(len(self.outs(user, again, "coldstake")), 1)

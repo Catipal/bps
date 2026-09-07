@@ -634,27 +634,59 @@ UniValue CreateColdStakeDelegation(const UniValue& params, CWallet* const pwalle
     return result;
 }
 
+//! The staking addresses a wallet is set to, in the shape every setter here returns.
+static UniValue StakingAddressResult(const CWallet& wallet) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    UniValue addresses(UniValue::VARR);
+    for (const CKeyID& staker : wallet.m_staking_addresses) {
+        addresses.push_back(EncodeDestination(PKHash(staker)));
+    }
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("staking_addresses", addresses);
+    result.pushKV("auto_delegating", wallet.IsAutoDelegating());
+    return result;
+}
+
+//! Decode an address a delegation can name. A P2CS script commits to key hashes, so a
+//! staker has to be a legacy address whatever else the wallet accepts elsewhere.
+static CKeyID StakerKeyFromAddress(const std::string& address)
+{
+    CTxDestination dest = DecodeDestination(address);
+    if (!IsValidDestination(dest))
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Invalid staking address: ") + address);
+    const PKHash* hash = boost::get<PKHash>(&dest);
+    if (!hash)
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, std::string("Not a legacy address, so a delegation cannot name it: ") + address);
+    return ToKeyID(*hash);
+}
+
 static RPCHelpMan setstakingaddress()
 {
     return RPCHelpMan{"setstakingaddress",
-                "\nChoose the staking key this wallet delegates its own coins to, and remember it.\n"
-                "\nSetting one turns on auto-delegation. From then on the wallet keeps its coins in\n"
-                "cold-stake outputs naming this key: getdelegationaddress needs no argument, and the\n"
-                "change from any spend comes back delegated instead of landing on a plain address and\n"
-                "dropping out of staking. Delegated coins are spent like any other, so nothing about\n"
-                "sending changes.\n"
-                "\nThe staking key can stake these coins and nothing else: OP_CHECKCOLDSTAKEVERIFY only\n"
-                "lets it produce coinstakes paying back to the same script. Only the owner keys, which\n"
-                "stay in this wallet, can move the coins.\n"
-                "\nCoins already received are not touched; use rotatestakingkey for those. Pass an empty\n"
-                "string to switch auto-delegation off.\n",
+                "\nChoose the staking key this wallet delegates its own coins to, replacing any\n"
+                "already set, and turn auto-delegation on.\n"
+                "\nAuto-delegation keeps this wallet's coins in cold-stake outputs naming these keys:\n"
+                "getdelegationaddress needs no argument, and the change from any spend comes back\n"
+                "delegated instead of landing on a plain address and dropping out of staking.\n"
+                "Delegated coins are spent like any other, so nothing about sending changes.\n"
+                "\nMore than one staking key is allowed, so the coins can be spread over several\n"
+                "staking wallets and one of them being offline does not stop everything staking.\n"
+                "Each new delegation names whichever key has the fewest to its name already,\n"
+                "counting both the addresses handed out and the coins held.\n"
+                "\nA staking key can stake these coins and nothing else: OP_CHECKCOLDSTAKEVERIFY only\n"
+                "lets it produce coinstakes paying back to the same script. Only the owner keys,\n"
+                "which stay in this wallet, can move the coins.\n"
+                "\nCoins already received are not touched; use rotatestakingkey for those.\n"
+                "\nPass an empty string to switch auto-delegation off. To keep the keys already\n"
+                "set and add another, use addstakingaddress.\n",
                 {
                     {"staking_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The staking address to delegate to, or \"\" to stop delegating."},
                 },
                 RPCResult{
                     RPCResult::Type::OBJ, "", "",
                     {
-                        {RPCResult::Type::STR, "staking_address", "The staking address now in use, or empty if switched off"},
+                        {RPCResult::Type::ARR, "staking_addresses", "The staking addresses now in use",
+                            {{RPCResult::Type::STR, "address", ""}}},
                         {RPCResult::Type::BOOL, "auto_delegating", "Whether the wallet now delegates its own coins"},
                     }},
                 RPCExamples{
@@ -669,28 +701,116 @@ static RPCHelpMan setstakingaddress()
 
     LOCK(pwallet->cs_wallet);
 
-    Optional<CKeyID> staker;
-    const std::string arg = request.params[0].get_str();
-    if (!arg.empty()) {
-        CTxDestination dest = DecodeDestination(arg);
-        if (!IsValidDestination(dest))
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid staking address");
-        const PKHash* hash = boost::get<PKHash>(&dest);
-        if (!hash)
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "staking_address must be a legacy address, since the script commits to a key hash");
-        staker = ToKeyID(*hash);
-    }
+    std::vector<CKeyID> stakers;
+    const std::string address = request.params[0].get_str();
+    if (!address.empty()) stakers.push_back(StakerKeyFromAddress(address));
 
-    if (!pwallet->SetStakingAddress(staker))
-        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to write the staking address to the wallet");
+    if (!pwallet->SetStakingAddresses(std::move(stakers)))
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to write the staking addresses to the wallet");
 
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("staking_address", staker ? EncodeDestination(PKHash(*staker)) : "");
-    result.pushKV("auto_delegating", pwallet->IsAutoDelegating());
-    return result;
+    return StakingAddressResult(*pwallet);
 },
     };
 }
+
+static RPCHelpMan addstakingaddress()
+{
+    return RPCHelpMan{"addstakingaddress",
+                "\nAdd a staking key to the ones this wallet delegates its own coins to, keeping\n"
+                "those already set.\n"
+                "\nAuto-delegation keeps this wallet's coins in cold-stake outputs naming these keys:\n"
+                "getdelegationaddress needs no argument, and the change from any spend comes back\n"
+                "delegated instead of landing on a plain address and dropping out of staking.\n"
+                "Delegated coins are spent like any other, so nothing about sending changes.\n"
+                "\nMore than one staking key is allowed, so the coins can be spread over several\n"
+                "staking wallets and one of them being offline does not stop everything staking.\n"
+                "Each new delegation names whichever key has the fewest to its name already,\n"
+                "counting both the addresses handed out and the coins held.\n"
+                "\nA staking key can stake these coins and nothing else: OP_CHECKCOLDSTAKEVERIFY only\n"
+                "lets it produce coinstakes paying back to the same script. Only the owner keys,\n"
+                "which stay in this wallet, can move the coins.\n"
+                "\nCoins already received are not touched; use rotatestakingkey for those.\n"
+                "\nAdding a key that is already there changes nothing. Coins already delegated to\n"
+                "the other keys stay where they are; only new delegations can name this one.\n",
+                {
+                    {"staking_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The staking address to add."},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::ARR, "staking_addresses", "The staking addresses now in use",
+                            {{RPCResult::Type::STR, "address", ""}}},
+                        {RPCResult::Type::BOOL, "auto_delegating", "Whether the wallet now delegates its own coins"},
+                    }},
+                RPCExamples{
+                    HelpExampleCli("addstakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                    + HelpExampleRpc("addstakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    LOCK(pwallet->cs_wallet);
+
+    std::vector<CKeyID> stakers = pwallet->m_staking_addresses;
+    stakers.push_back(StakerKeyFromAddress(request.params[0].get_str()));
+
+    if (!pwallet->SetStakingAddresses(std::move(stakers)))
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to write the staking addresses to the wallet");
+
+    return StakingAddressResult(*pwallet);
+},
+    };
+}
+
+static RPCHelpMan removestakingaddress()
+{
+    return RPCHelpMan{"removestakingaddress",
+                "\nStop delegating to one of this wallet's staking keys.\n"
+                "\nCoins already delegated to it are not moved and it keeps staking them. This only\n"
+                "stops new delegations naming it; use rotatestakingkey to move the coins.\n"
+                "\nRemoving the last one switches auto-delegation off, at which point change goes\n"
+                "back to ordinary addresses, which do not stake.\n",
+                {
+                    {"staking_address", RPCArg::Type::STR, RPCArg::Optional::NO, "The staking address to stop using."},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+                    {
+                        {RPCResult::Type::ARR, "staking_addresses", "The staking addresses now in use",
+                            {{RPCResult::Type::STR, "address", ""}}},
+                        {RPCResult::Type::BOOL, "auto_delegating", "Whether the wallet now delegates its own coins"},
+                    }},
+                RPCExamples{
+                    HelpExampleCli("removestakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                    + HelpExampleRpc("removestakingaddress", "\"TVQ5qC2V4CsyhKfw7GvGVDu7EHGhaF1HHQ\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    if (!wallet) return NullUniValue;
+    CWallet* const pwallet = wallet.get();
+
+    LOCK(pwallet->cs_wallet);
+
+    const CKeyID drop = StakerKeyFromAddress(request.params[0].get_str());
+    std::vector<CKeyID> stakers;
+    for (const CKeyID& staker : pwallet->m_staking_addresses) {
+        if (staker != drop) stakers.push_back(staker);
+    }
+    if (stakers.size() == pwallet->m_staking_addresses.size())
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "That address is not one of this wallet's staking addresses");
+
+    if (!pwallet->SetStakingAddresses(std::move(stakers)))
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to write the staking addresses to the wallet");
+
+    return StakingAddressResult(*pwallet);
+},
+    };
+}
+
 
 static RPCHelpMan getdelegationaddress()
 {
@@ -703,7 +823,7 @@ static RPCHelpMan getdelegationaddress()
                 "\nThe address encodes both keys, so it is longer than a normal one, and only wallets that\n"
                 "understand this address type can pay it. Older wallets and exchanges will reject it.\n",
                 {
-                    {"staker_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The staking address that will stake coins sent here. Defaults to the one set with setstakingaddress."},
+                    {"staker_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The staking address that will stake coins sent here. Defaults to one of those set with setstakingaddress, whichever has the fewest delegations to its name."},
                     {"owner_address", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "The address that will own them. Defaults to a fresh address from this wallet."},
                 },
                 RPCResult{
@@ -734,8 +854,8 @@ static RPCHelpMan getdelegationaddress()
         if (!staker)
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "staker_address must be a legacy address, since the script commits to a key hash");
         staker_id = ToKeyID(*staker);
-    } else if (pwallet->m_staking_address) {
-        staker_id = *pwallet->m_staking_address;
+    } else if (const Optional<CKeyID> picked = pwallet->PickStakingKey()) {
+        staker_id = *picked;
     } else {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "No staker_address given and none set for this wallet; call setstakingaddress first");
     }
@@ -3002,7 +3122,8 @@ static RPCHelpMan getwalletinfo()
                         {RPCResult::Type::STR_AMOUNT, "cold_stake", "the total cold stake balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "immature_cold_stake", "the total immature cold stake balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "delegated", "the total delegated balance of the wallet in " + CURRENCY_UNIT},
-                        {RPCResult::Type::STR, "staking_address", /* optional */ true, "the staking key this wallet delegates its own coins to, if auto-delegation is on"},
+                        {RPCResult::Type::ARR, "staking_addresses", /* optional */ true, "the staking keys this wallet delegates its own coins to, if auto-delegation is on",
+                            {{RPCResult::Type::STR, "address", ""}}},
                         {RPCResult::Type::STR_AMOUNT, "immature_delegated", "the total immature delegated balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::STR_AMOUNT, "total", "the total balance of the wallet in " + CURRENCY_UNIT},
                         {RPCResult::Type::NUM, "txcount", "the total number of transactions in the wallet"},
@@ -3057,7 +3178,13 @@ static RPCHelpMan getwalletinfo()
     obj.pushKV("cold_stake", ValueFromAmount(bal.m_mine_cold_stake));
     obj.pushKV("immature_cold_stake", ValueFromAmount(bal.m_mine_immature_cold_stake));
     obj.pushKV("delegated", ValueFromAmount(bal.m_mine_delegated));
-    if (pwallet->m_staking_address) obj.pushKV("staking_address", EncodeDestination(PKHash(*pwallet->m_staking_address)));
+    if (!pwallet->m_staking_addresses.empty()) {
+        UniValue staking_addresses(UniValue::VARR);
+        for (const CKeyID& staker : pwallet->m_staking_addresses) {
+            staking_addresses.push_back(EncodeDestination(PKHash(staker)));
+        }
+        obj.pushKV("staking_addresses", staking_addresses);
+    }
     obj.pushKV("immature_delegated", ValueFromAmount(bal.m_mine_immature_delegated));
     obj.pushKV("total", ValueFromAmount(bal.m_mine_trusted + bal.m_mine_untrusted_pending + bal.m_mine_immature + bal.m_mine_delegated));
     obj.pushKV("txcount",       (int)pwallet->mapWallet.size());
@@ -5177,6 +5304,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "rotatestakingkey",                 &rotatestakingkey,              {"new_staker_address", "owner_address"} },
     { "wallet",             "getdelegationaddress",             &getdelegationaddress,          {"staker_address", "owner_address"} },
     { "wallet",             "setstakingaddress",                &setstakingaddress,             {"staking_address"} },
+    { "wallet",             "addstakingaddress",                &addstakingaddress,             {"staking_address"} },
+    { "wallet",             "removestakingaddress",             &removestakingaddress,          {"staking_address"} },
     { "wallet",             "sethdseed",                        &sethdseed,                     {"newkeypool","seed"} },
     { "wallet",             "setlabel",                         &setlabel,                      {"address","label"} },
     { "wallet",             "settxfee",                         &settxfee,                      {"amount"} },

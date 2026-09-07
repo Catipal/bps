@@ -518,21 +518,27 @@ public:
         LOCK(m_wallet->cs_wallet);
         return m_wallet->IsAutoDelegating();
     }
-    std::string getStakingAddress() override
+    std::vector<std::string> getStakingAddresses() override
     {
         LOCK(m_wallet->cs_wallet);
-        if (!m_wallet->m_staking_address) return {};
-        return EncodeDestination(PKHash(*m_wallet->m_staking_address));
+        std::vector<std::string> out;
+        for (const CKeyID& staker : m_wallet->m_staking_addresses) {
+            out.push_back(EncodeDestination(PKHash(staker)));
+        }
+        return out;
     }
-    bool setStakingAddress(const std::string& address) override
+    bool setStakingAddresses(const std::vector<std::string>& addresses) override
     {
         LOCK(m_wallet->cs_wallet);
-        if (address.empty()) return m_wallet->SetStakingAddress(nullopt);
-        CTxDestination dest = DecodeDestination(address);
-        // A P2CS script commits to key hashes, so only a legacy address can name a staker.
-        const PKHash* hash = boost::get<PKHash>(&dest);
-        if (!hash) return false;
-        return m_wallet->SetStakingAddress(ToKeyID(*hash));
+        std::vector<CKeyID> stakers;
+        for (const std::string& address : addresses) {
+            CTxDestination dest = DecodeDestination(address);
+            // A P2CS script commits to key hashes, so only a legacy address names a staker.
+            const PKHash* hash = boost::get<PKHash>(&dest);
+            if (!hash) return false;
+            stakers.push_back(ToKeyID(*hash));
+        }
+        return m_wallet->SetStakingAddresses(std::move(stakers));
     }
     bool getNewDelegationDestination(const std::string& label, CTxDestination& dest) override
     {

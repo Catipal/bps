@@ -55,6 +55,9 @@ private:
     void syncStakingSwitch();
     //! Match the Delegate tab's automatic page to what the wallet has recorded.
     void syncAutoDelegation();
+    //! Write a staking address list, reporting failure rather than leaving the page
+    //! claiming something the wallet did not record.
+    void applyStakingAddresses(const std::vector<std::string>& addresses);
 
     Ui::StakePage *ui;
     ClientModel *clientModel;
@@ -76,7 +79,8 @@ private Q_SLOTS:
     void coldStakerControlFeaturesChanged(bool);
     void on_delegationModeSelector_currentIndexChanged(int index);
     void on_autoStakerPasteButton_clicked();
-    void on_autoDelegationApplyButton_clicked();
+    void on_autoDelegationAddButton_clicked();
+    void on_autoDelegationRemoveButton_clicked();
     void on_autoDelegationClearButton_clicked();
 
 private:

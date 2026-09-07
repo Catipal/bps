@@ -44,6 +44,7 @@ const std::string OLD_KEY{"wkey"};
 const std::string ORDERPOSNEXT{"orderposnext"};
 const std::string STAKINGENABLED{"stakingenabled"};
 const std::string STAKINGADDRESS{"stakingaddress"};
+const std::string STAKINGADDRESSES{"stakingaddresses"};
 const std::string POOL{"pool"};
 const std::string PURPOSE{"purpose"};
 const std::string SETTINGS{"settings"};
@@ -146,14 +147,18 @@ bool WalletBatch::WriteStakingEnabled(bool enabled)
     return WriteIC(DBKeys::STAKINGENABLED, enabled);
 }
 
-bool WalletBatch::WriteStakingAddress(const uint160& staker)
+bool WalletBatch::WriteStakingAddresses(const std::vector<uint160>& stakers)
 {
-    return WriteIC(DBKeys::STAKINGADDRESS, staker);
+    // The single-address record an earlier build wrote would otherwise sit there and
+    // be read back on the next load, resurrecting an address the user removed.
+    EraseIC(DBKeys::STAKINGADDRESS);
+    return WriteIC(DBKeys::STAKINGADDRESSES, stakers);
 }
 
-bool WalletBatch::EraseStakingAddress()
+bool WalletBatch::EraseStakingAddresses()
 {
-    return EraseIC(DBKeys::STAKINGADDRESS);
+    EraseIC(DBKeys::STAKINGADDRESS);
+    return EraseIC(DBKeys::STAKINGADDRESSES);
 }
 
 bool WalletBatch::WriteMasterKey(unsigned int nID, const CMasterKey& kMasterKey)
@@ -570,10 +575,21 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             bool enabled;
             ssValue >> enabled;
             pwallet->m_staking_enabled_setting = enabled;
+        } else if (strType == DBKeys::STAKINGADDRESSES) {
+            std::vector<uint160> stakers;
+            ssValue >> stakers;
+            pwallet->m_staking_addresses.clear();
+            for (const uint160& staker : stakers) {
+                pwallet->m_staking_addresses.emplace_back(staker);
+            }
         } else if (strType == DBKeys::STAKINGADDRESS) {
+            // Written by a build that allowed only one staking address. Read it so such
+            // a wallet keeps delegating; the next change rewrites it as a list.
             uint160 staker;
             ssValue >> staker;
-            pwallet->m_staking_address = CKeyID(staker);
+            if (pwallet->m_staking_addresses.empty()) {
+                pwallet->m_staking_addresses.emplace_back(staker);
+            }
         } else if (strType == DBKeys::ORDERPOSNEXT) {
             ssValue >> pwallet->nOrderPosNext;
         } else if (strType == DBKeys::DESTDATA) {

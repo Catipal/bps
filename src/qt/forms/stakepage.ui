@@ -633,14 +633,33 @@
                                             <item>
                                                 <widget class="QLabel" name="labelAutoDelegationHelp">
                                                     <property name="text">
-                                                        <string>Manual delegation moves coins you already hold into a delegation, one transaction at a time. Automatic delegation instead tells this wallet which staking key to use from now on: the Receive tab can then hand out delegation addresses, whose coins stake as soon as they arrive, and change from your own spends stays delegated instead of dropping out of staking.
+                                                        <string>Manual delegation moves coins you already hold into a delegation, one transaction at a time. Automatic delegation instead tells this wallet which staking keys to use from now on: the Receive tab can then hand out delegation addresses, whose coins stake as soon as they arrive, and change from your own spends stays delegated instead of dropping out of staking.
 
-The staking key can only produce coinstakes that pay back to you. It cannot spend your coins, so the wallet holding it does not need a passphrase.
+List more than one staking address to spread your coins over several staking wallets, so one of them being offline does not stop everything staking. Each new delegation goes to whichever of them has the fewest to its name already, counting both the addresses handed out and the coins held.
 
-Coins you already hold are not moved. Use manual delegation, or the rotatestakingkey RPC, for those.</string>
+A staking key can only produce coinstakes that pay back to you. It cannot spend your coins, so the wallet holding it does not need a passphrase.
+
+Coins you already hold are not moved, and removing an address here does not move the coins already delegated to it. Use manual delegation, or the rotatestakingkey RPC, for those.</string>
                                                     </property>
                                                     <property name="wordWrap">
                                                         <bool>true</bool>
+                                                    </property>
+                                                </widget>
+                                            </item>
+                                            <item>
+                                                <widget class="QLabel" name="labelStakingAddressList">
+                                                    <property name="text">
+                                                        <string>Staking addresses in use:</string>
+                                                    </property>
+                                                </widget>
+                                            </item>
+                                            <item>
+                                                <widget class="QListWidget" name="stakingAddressList">
+                                                    <property name="selectionMode">
+                                                        <enum>QAbstractItemView::ExtendedSelection</enum>
+                                                    </property>
+                                                    <property name="maximumHeight">
+                                                        <number>140</number>
                                                     </property>
                                                 </widget>
                                             </item>
@@ -649,7 +668,7 @@ Coins you already hold are not moved. Use manual delegation, or the rotatestakin
                                                     <item>
                                                         <widget class="QLabel" name="labelAutoStakerAddress">
                                                             <property name="text">
-                                                                <string>Staking address:</string>
+                                                                <string>Add address:</string>
                                                             </property>
                                                         </widget>
                                                     </item>
@@ -666,21 +685,28 @@ Coins you already hold are not moved. Use manual delegation, or the rotatestakin
                                                             </property>
                                                         </widget>
                                                     </item>
+                                                    <item>
+                                                        <widget class="QPushButton" name="autoDelegationAddButton">
+                                                            <property name="text">
+                                                                <string>&amp;Add</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
                                                 </layout>
                                             </item>
                                             <item>
                                                 <layout class="QHBoxLayout" name="layoutAutoButtons">
                                                     <item>
-                                                        <widget class="QPushButton" name="autoDelegationApplyButton">
+                                                        <widget class="QPushButton" name="autoDelegationRemoveButton">
                                                             <property name="text">
-                                                                <string>&amp;Enable automatic delegation</string>
+                                                                <string>&amp;Remove selected</string>
                                                             </property>
                                                         </widget>
                                                     </item>
                                                     <item>
                                                         <widget class="QPushButton" name="autoDelegationClearButton">
                                                             <property name="text">
-                                                                <string>&amp;Disable</string>
+                                                                <string>Remove a&amp;ll</string>
                                                             </property>
                                                         </widget>
                                                     </item>

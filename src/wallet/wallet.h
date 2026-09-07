@@ -1110,16 +1110,23 @@ public:
     //! thread is running right now" and is reported by getstakinginfo.
     Optional<bool> m_staking_enabled_setting;
 
-    //! The staking key this wallet hands its own coins to. Setting it turns on
-    //! auto-delegation: receiving addresses can be minted as delegation addresses,
-    //! and change from any spend comes back delegated to this key instead of
-    //! landing on a plain address and quietly dropping out of staking.
-    //! nullopt means the wallet delegates nothing by itself, which is how every
-    //! wallet written before this record behaves.
-    Optional<CKeyID> m_staking_address;
+    //! The staking keys this wallet hands its own coins to. A non-empty list turns on
+    //! auto-delegation: receiving addresses can be minted as delegation addresses, and
+    //! change from any spend comes back delegated instead of landing on a plain address
+    //! and quietly dropping out of staking.
+    //! More than one is allowed so the coins can be spread over several staking wallets,
+    //! and one of them being offline does not stop everything staking. Empty means the
+    //! wallet delegates nothing by itself, which is how a wallet with no record behaves.
+    std::vector<CKeyID> m_staking_addresses;
 
-    //! Record (or, with nullopt, forget) the staking key in the wallet file.
-    bool SetStakingAddress(const Optional<CKeyID>& staker) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! Record the staking keys in the wallet file, or forget them if the list is empty.
+    //! Duplicates are dropped; the order given is kept, since it breaks ties below.
+    bool SetStakingAddresses(std::vector<CKeyID> stakers) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    //! Which staking key the next delegation should name: the one with the fewest
+    //! delegations to its name already, so repeated use spreads them out rather than
+    //! piling everything on the first entry.
+    Optional<CKeyID> PickStakingKey() const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     //! True when this wallet delegates its own coins without being asked. Cold staking
     //! switched off at the node level disables it: the outputs would not be stakeable.

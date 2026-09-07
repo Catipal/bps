@@ -29,6 +29,8 @@
 #include <QSortFilterProxyModel>
 #include <QApplication>
 #include <QClipboard>
+#include <QListWidgetItem>
+#include <QSet>
 #include <QDialog>
 #include <QMessageBox>
 #include <QSignalBlocker>
@@ -318,26 +320,48 @@ void StakePage::syncAutoDelegation()
 {
     if (!walletModel) return;
 
-    const QString staker = QString::fromStdString(walletModel->wallet().getStakingAddress());
+    const std::vector<std::string> stakers = walletModel->wallet().getStakingAddresses();
     const bool on = walletModel->wallet().isAutoDelegating();
-    ui->autoStakerAddress->setText(staker);
-    ui->autoDelegationClearButton->setEnabled(!staker.isEmpty());
+
+    ui->stakingAddressList->clear();
+    for (const std::string& staker : stakers) {
+        ui->stakingAddressList->addItem(QString::fromStdString(staker));
+    }
+    ui->autoDelegationClearButton->setEnabled(!stakers.empty());
+    ui->autoDelegationRemoveButton->setEnabled(!stakers.empty());
 
     if (on) {
         ui->labelAutoDelegationStatus->setText(
-            tr("On. Coins received at this wallet's delegation addresses stake automatically, "
-               "and change stays delegated."));
-    } else if (!staker.isEmpty()) {
+            stakers.size() == 1
+                ? tr("On. Coins received at this wallet's delegation addresses stake "
+                     "automatically, and change stays delegated.")
+                : tr("On, across %1 staking addresses. Each new delegation goes to whichever of "
+                     "them has the fewest to its name already.").arg(stakers.size()));
+    } else if (!stakers.empty()) {
         // The record is there but cold staking is switched off for the node, so the
         // outputs would not be stakeable. Saying "on" here would be a lie.
         ui->labelAutoDelegationStatus->setText(
-            tr("A staking address is set, but cold staking is disabled on this node "
+            tr("Staking addresses are set, but cold staking is disabled on this node "
                "(-coldstaking=0), so nothing is being delegated."));
     } else {
         ui->labelAutoDelegationStatus->setText(
             tr("Off. Delegation addresses are unavailable and change goes to ordinary "
                "addresses, which do not stake."));
     }
+}
+
+void StakePage::applyStakingAddresses(const std::vector<std::string>& addresses)
+{
+    if (!walletModel->wallet().setStakingAddresses(addresses)) {
+        // Either an address is not one a P2CS script can name, or the record could not
+        // be written. Nothing changed, so say so rather than leaving the page claiming
+        // a list the wallet does not have.
+        QMessageBox::warning(this, tr("Automatic delegation"),
+            tr("Could not save the staking addresses. A delegation commits to a key hash, "
+               "so each one has to be a legacy address."),
+            QMessageBox::Ok, QMessageBox::Ok);
+    }
+    syncAutoDelegation();
 }
 
 void StakePage::on_delegationModeSelector_currentIndexChanged(int index)
@@ -351,7 +375,7 @@ void StakePage::on_autoStakerPasteButton_clicked()
     ui->autoStakerAddress->setText(QApplication::clipboard()->text());
 }
 
-void StakePage::on_autoDelegationApplyButton_clicked()
+void StakePage::on_autoDelegationAddButton_clicked()
 {
     if (!walletModel) return;
 
@@ -361,26 +385,45 @@ void StakePage::on_autoDelegationApplyButton_clicked()
         return;
     }
 
-    if (!walletModel->wallet().setStakingAddress(staker.toStdString())) {
-        // The address is valid but not one a P2CS script can name, or the record could
-        // not be written. Either way nothing changed, so say so rather than leaving the
-        // page claiming it is on.
-        QMessageBox::warning(this, tr("Automatic delegation"),
-            tr("Could not use that address. A delegation commits to a key hash, so the "
-               "staking address has to be a legacy address."),
+    std::vector<std::string> stakers = walletModel->wallet().getStakingAddresses();
+    const std::string added = staker.toStdString();
+    if (std::find(stakers.begin(), stakers.end(), added) != stakers.end()) {
+        // Already there. Silently rewriting the same list would look like it worked and
+        // leave the user wondering why the list did not grow.
+        QMessageBox::information(this, tr("Automatic delegation"),
+            tr("That staking address is already in the list."),
             QMessageBox::Ok, QMessageBox::Ok);
-        syncAutoDelegation();
         return;
     }
-    syncAutoDelegation();
+    stakers.push_back(added);
+    applyStakingAddresses(stakers);
+    ui->autoStakerAddress->clear();
+}
+
+void StakePage::on_autoDelegationRemoveButton_clicked()
+{
+    if (!walletModel) return;
+
+    const QList<QListWidgetItem*> selected = ui->stakingAddressList->selectedItems();
+    if (selected.isEmpty()) return;
+
+    QSet<QString> drop;
+    for (const QListWidgetItem* item : selected) drop.insert(item->text());
+
+    std::vector<std::string> stakers;
+    for (const std::string& staker : walletModel->wallet().getStakingAddresses()) {
+        if (!drop.contains(QString::fromStdString(staker))) stakers.push_back(staker);
+    }
+    // Coins already delegated to a removed key stay delegated to it and keep being
+    // staked; this only stops new delegations naming it.
+    applyStakingAddresses(stakers);
 }
 
 void StakePage::on_autoDelegationClearButton_clicked()
 {
     if (!walletModel) return;
     // Coins already delegated stay delegated; this only stops new ones being made.
-    walletModel->wallet().setStakingAddress("");
-    syncAutoDelegation();
+    applyStakingAddresses({});
 }
 
 // ColdStake Control: settings menu - cold staker control enabled/disabled by user

@@ -90,12 +90,22 @@ exchange to pay one.
   undelegated and no longer staking, which is the sort of thing nobody notices until
   the rewards stop. Pass "" to switch it off.
 
+- addstakingaddress "address" and removestakingaddress "address" keep a wallet
+  delegating to more than one staking key at once, so the coins can be spread over
+  several staking wallets and one of them being offline does not stop everything
+  staking. Each new delegation names whichever key has the fewest to its name
+  already, counting both the addresses handed out and the coins held, so repeated
+  use spreads them rather than piling everything on the first entry. Removing a key
+  does not move the coins already delegated to it -- it keeps staking them -- it
+  only stops new delegations naming it. getwalletinfo reports the list as
+  staking_addresses.
+
 While auto-delegation is on, delegated coins are spent like any other: they count
 towards the balance and coin selection reaches for them without being asked. That is
 normally opt-in, because spending a delegated coin breaks a delegation the owner set
 up deliberately -- here the wallet made the delegation itself and puts the change
 straight back into another one. The setting is stored per wallet and survives a
-restart. getwalletinfo reports it as staking_address.
+restart.
 
 Sending to and receiving from ordinary addresses therefore works as it always did,
 without taking the wallet out of staking. Coins still have to reach 500 confirmations
@@ -103,8 +113,9 @@ before they can stake, as every output on this chain does.
 
 In the GUI, the Receive tab's address type menu gains a Delegation entry, and the
 Stake page's Delegate tab now asks which kind of delegation you want: Manual, which
-is the form that was always there, or Automatic, which is where the staking address
-is set. Picking Delegation without one explains where to set it rather than failing.
+is the form that was always there, or Automatic, which is where the staking
+addresses are listed, added and removed. Picking Delegation without one explains
+where to set it rather than failing.
 
 Fixes
 =====
