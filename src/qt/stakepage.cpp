@@ -29,8 +29,11 @@
 #include <QSortFilterProxyModel>
 #include <QApplication>
 #include <QClipboard>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QListWidgetItem>
-#include <QSet>
+#include <QTimer>
+#include <QToolButton>
 #include <QDialog>
 #include <QMessageBox>
 #include <QSignalBlocker>
@@ -79,14 +82,14 @@ StakePage::StakePage(const PlatformStyle *_platformStyle, QWidget *parent) :
            "does not need a passphrase."));
     ui->stakingAddressList->setToolTip(
         tr("List more than one to spread your coins over several staking wallets, so one of "
-           "them being offline does not stop everything staking. Each new delegation goes to "
-           "whichever address has the fewest to its name already."));
-    const QString keep = tr("Coins already delegated to a removed address are not moved and it "
-                            "keeps staking them. Only new delegations stop naming it.");
-    ui->autoDelegationRemoveButton->setToolTip(keep);
-    ui->autoDelegationClearButton->setToolTip(keep);
-    connect(ui->stakingAddressList, &QListWidget::itemSelectionChanged,
-            this, &StakePage::updateStakingAddressButtons);
+           "them being offline does not stop everything staking.\n\n"
+           "Each new delegation goes to whichever address is named by the fewest of them so "
+           "far, counting the delegation addresses handed out and the delegated coins still "
+           "unspent. It counts delegations, not amounts, so an address holding one large "
+           "delegation can still be chosen ahead of one holding several small ones."));
+    ui->autoDelegationClearButton->setToolTip(
+        tr("Coins already delegated to a removed address are not moved and it keeps staking "
+           "them. Only new delegations stop naming it."));
 }
 
 StakePage::~StakePage()
@@ -340,16 +343,17 @@ void StakePage::syncAutoDelegation()
 
     ui->stakingAddressList->clear();
     for (const std::string& staker : stakers) {
-        ui->stakingAddressList->addItem(QString::fromStdString(staker));
+        addStakingAddressRow(QString::fromStdString(staker));
     }
-    updateStakingAddressButtons();
+    ui->autoDelegationClearButton->setEnabled(!stakers.empty());
 
     if (on) {
         ui->labelAutoDelegationStatus->setText(
             stakers.size() == 1
                 ? tr("On. Coins sent to this wallet's delegation addresses stake on arrival.")
-                : tr("On, spread across %1 addresses. Each new delegation goes to the one with "
-                     "the fewest to its name.").arg(stakers.size()));
+                : tr("On, spread across %1 addresses. Each new delegation goes to whichever is "
+                     "named by the fewest so far, counted by number rather than by amount.")
+                      .arg(stakers.size()));
     } else if (!stakers.empty()) {
         // The record is there but cold staking is switched off for the node, so the
         // outputs would not be stakeable. Saying "on" here would be a lie.
@@ -363,10 +367,47 @@ void StakePage::syncAutoDelegation()
     }
 }
 
-void StakePage::updateStakingAddressButtons()
+void StakePage::addStakingAddressRow(const QString& address)
 {
-    ui->autoDelegationRemoveButton->setEnabled(!ui->stakingAddressList->selectedItems().isEmpty());
-    ui->autoDelegationClearButton->setEnabled(ui->stakingAddressList->count() > 0);
+    QWidget* row = new QWidget(ui->stakingAddressList);
+    QHBoxLayout* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(4, 1, 1, 1);
+
+    QLabel* label = new QLabel(address, row);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    layout->addWidget(label);
+    layout->addStretch();
+
+    QToolButton* remove = new QToolButton(row);
+    remove->setText(QString::fromUtf8("\xE2\x9C\x95")); // MULTIPLICATION X
+    remove->setAutoRaise(true);
+    remove->setToolTip(tr("Stop delegating to %1. Coins already delegated to it are not "
+                          "moved and it keeps staking them.").arg(address));
+    layout->addWidget(remove);
+
+    connect(remove, &QToolButton::clicked, this, [this, address]() {
+        // Removing rebuilds the list, which deletes this very button. Doing that from
+        // inside its own clicked() would be destroying a widget mid-signal, so let the
+        // click finish first.
+        QTimer::singleShot(0, this, [this, address]() { removeStakingAddress(address); });
+    });
+
+    QListWidgetItem* item = new QListWidgetItem(ui->stakingAddressList);
+    item->setSizeHint(row->sizeHint());
+    ui->stakingAddressList->setItemWidget(item, row);
+}
+
+void StakePage::removeStakingAddress(const QString& address)
+{
+    if (!walletModel) return;
+
+    std::vector<std::string> stakers;
+    for (const std::string& staker : walletModel->wallet().getStakingAddresses()) {
+        if (QString::fromStdString(staker) != address) stakers.push_back(staker);
+    }
+    // Coins already delegated to it stay delegated and it keeps staking them; this
+    // only stops new delegations naming it.
+    applyStakingAddresses(stakers);
 }
 
 void StakePage::applyStakingAddresses(const std::vector<std::string>& addresses)
@@ -417,25 +458,6 @@ void StakePage::on_autoDelegationAddButton_clicked()
     stakers.push_back(added);
     applyStakingAddresses(stakers);
     ui->autoStakerAddress->clear();
-}
-
-void StakePage::on_autoDelegationRemoveButton_clicked()
-{
-    if (!walletModel) return;
-
-    const QList<QListWidgetItem*> selected = ui->stakingAddressList->selectedItems();
-    if (selected.isEmpty()) return;
-
-    QSet<QString> drop;
-    for (const QListWidgetItem* item : selected) drop.insert(item->text());
-
-    std::vector<std::string> stakers;
-    for (const std::string& staker : walletModel->wallet().getStakingAddresses()) {
-        if (!drop.contains(QString::fromStdString(staker))) stakers.push_back(staker);
-    }
-    // Coins already delegated to a removed key stay delegated to it and keep being
-    // staked; this only stops new delegations naming it.
-    applyStakingAddresses(stakers);
 }
 
 void StakePage::on_autoDelegationClearButton_clicked()

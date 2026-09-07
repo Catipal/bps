@@ -55,8 +55,11 @@ private:
     void syncStakingSwitch();
     //! Match the Delegate tab's automatic page to what the wallet has recorded.
     void syncAutoDelegation();
-    //! Remove acts on a selection, Remove all on the list; grey each out accordingly.
-    void updateStakingAddressButtons();
+    //! Build one row of the staking address list: the address, and the button that
+    //! stops delegating to it.
+    void addStakingAddressRow(const QString& address);
+    //! Drop one address from the list and write what is left.
+    void removeStakingAddress(const QString& address);
     //! Write a staking address list, reporting failure rather than leaving the page
     //! claiming something the wallet did not record.
     void applyStakingAddresses(const std::vector<std::string>& addresses);
@@ -82,7 +85,6 @@ private Q_SLOTS:
     void on_delegationModeSelector_currentIndexChanged(int index);
     void on_autoStakerPasteButton_clicked();
     void on_autoDelegationAddButton_clicked();
-    void on_autoDelegationRemoveButton_clicked();
     void on_autoDelegationClearButton_clicked();
 
 private:
