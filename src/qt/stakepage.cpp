@@ -463,7 +463,22 @@ void StakePage::on_autoDelegationAddButton_clicked()
 void StakePage::on_autoDelegationClearButton_clicked()
 {
     if (!walletModel) return;
-    // Coins already delegated stay delegated; this only stops new ones being made.
+
+    const int count = ui->stakingAddressList->count();
+    if (count == 0) return;
+
+    // A staking address usually belongs to another wallet, so the wallet cannot offer
+    // it back once it is gone -- the user has to go and find it again. Worth asking
+    // before clearing the lot, where removing a single row is cheap enough not to be.
+    const QMessageBox::StandardButton answer = QMessageBox::question(this,
+        tr("Remove all staking addresses"),
+        tr("Stop delegating to all %1 staking addresses?\n\n"
+           "Coins already delegated keep being staked by them and are not moved. But new "
+           "deposits and change will go to ordinary addresses, which do not stake, and you "
+           "will need these addresses again to turn this back on.").arg(count),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) return;
+
     applyStakingAddresses({});
 }
 

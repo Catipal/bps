@@ -5572,6 +5572,9 @@ Optional<CKeyID> CWallet::PickStakingKey() const
     // go to the key looking after less.
     // Value would be the fairer measure than a count, but it moves under the user as
     // coins mature and are spent, whereas a count gives the same answer twice running.
+    // Only this wallet's own delegations count. A wallet that also holds one of these
+    // staking keys sees the outputs it stakes for other people too, and those are not
+    // its stake to spread.
     std::map<CKeyID, size_t> held;
     for (const CKeyID& staker : m_staking_addresses) held.emplace(staker, 0);
 
@@ -5587,6 +5590,9 @@ Optional<CKeyID> CWallet::PickStakingKey() const
         for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
             const CScript& script = wtx.tx->vout[i].scriptPubKey;
             if (!script.IsPayToColdStaking()) continue;
+            // ISMINE_SPENDABLE_DELEGATED means the owner key is ours, so these are the
+            // coins we delegated. ISMINE_COLD would be somebody else's, staked by us.
+            if (!(IsMine(wtx.tx->vout[i]) & ISMINE_SPENDABLE_DELEGATED)) continue;
             if (IsSpent(entry.first, i)) continue;
             std::vector<std::vector<unsigned char>> solutions;
             if (Solver(script, solutions) != TxoutType::COLDSTAKE) continue;
