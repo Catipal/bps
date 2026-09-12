@@ -347,23 +347,16 @@ void StakePage::syncAutoDelegation()
     }
     ui->autoDelegationClearButton->setEnabled(!stakers.empty());
 
-    if (on) {
-        ui->labelAutoDelegationStatus->setText(
-            stakers.size() == 1
-                ? tr("On. Coins sent to this wallet's delegation addresses stake on arrival.")
-                : tr("On, spread across %1 addresses. Each new delegation goes to whichever is "
-                     "named by the fewest so far, counted by number rather than by amount.")
-                      .arg(stakers.size()));
-    } else if (!stakers.empty()) {
-        // The record is there but cold staking is switched off for the node, so the
-        // outputs would not be stakeable. Saying "on" here would be a lie.
+    // The on/off line only restated what the list and its buttons already show. The one
+    // thing the controls cannot show is the node refusing to cold stake at all, which
+    // would leave the list claiming a delegation that is not happening, so the label
+    // survives for that alone and stays hidden the rest of the time.
+    const bool blocked = !on && !stakers.empty();
+    ui->labelAutoDelegationStatus->setVisible(blocked);
+    if (blocked) {
         ui->labelAutoDelegationStatus->setText(
             tr("Cold staking is disabled on this node (-coldstaking=0), so nothing is "
                "being delegated."));
-    } else {
-        ui->labelAutoDelegationStatus->setText(
-            tr("Off. Add an address to stake coins as they arrive; until then change goes "
-               "to ordinary addresses, which do not stake."));
     }
 }
 
