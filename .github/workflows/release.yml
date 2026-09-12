@@ -1,0 +1,258 @@
+name: Release
+
+# Builds the release archives and attaches them to the GitHub release.
+#
+# Push a tag like v0.22 and every target below is built from that tag and
+# uploaded. The archives match the layout v0.21 shipped: one bitcoin-pos-<ver>/
+# directory holding the five binaries flat, tar.gz for Linux and macOS, zip for
+# Windows with doc/README_windows.txt alongside as readme.txt.
+#
+# Run it by hand first (Actions -> Release -> Run workflow) to check a target
+# builds before committing to a tag; with no tag the archives are left as
+# workflow artifacts and nothing is published.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for the archive names, without the leading v (e.g. 0.22)'
+        required: true
+        default: '0.22'
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: version
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux-gnu
+            host: x86_64-linux-gnu
+            packages: ''
+          - name: i686-pc-linux-gnu
+            host: i686-pc-linux-gnu
+            packages: 'libc6-dev-i386 lib32stdc++-11-dev'
+            i386: true
+          - name: aarch64-linux-gnu
+            host: aarch64-linux-gnu
+            packages: 'g++-aarch64-linux-gnu'
+          - name: arm-linux-gnueabihf
+            host: arm-linux-gnueabihf
+            packages: 'g++-arm-linux-gnueabihf'
+          - name: riscv64-linux-gnu
+            host: riscv64-linux-gnu
+            packages: 'g++-riscv64-linux-gnu'
+          - name: win64
+            host: x86_64-w64-mingw32
+            packages: 'g++-mingw-w64-x86-64'
+            windows: true
+          - name: win32
+            host: i686-w64-mingw32
+            packages: 'g++-mingw-w64-i686'
+            windows: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          set -e
+          # g++-multilib conflicts with the Linux cross compilers, so the 32-bit
+          # target takes the individual libraries instead of the metapackage.
+          if [ "${{ matrix.i386 }}" = "true" ]; then
+            sudo dpkg --add-architecture i386
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libtool autotools-dev automake pkg-config bison \
+            curl bsdmainutils python3 zip ${{ matrix.packages }}
+          if [ "${{ matrix.i386 }}" = "true" ]; then
+            sudo apt-get install -y --no-install-recommends linux-libc-dev:i386
+          fi
+          # mingw defaults to the win32 threading model, which Bitcoin cannot use.
+          if [ "${{ matrix.windows }}" = "true" ]; then
+            sudo update-alternatives --set ${{ matrix.host }}-g++ /usr/bin/${{ matrix.host }}-g++-posix
+            sudo update-alternatives --set ${{ matrix.host }}-gcc /usr/bin/${{ matrix.host }}-gcc-posix
+          fi
+
+      # Qt and Boost are most of the build time and only change when depends does.
+      - name: Cache depends
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/built
+            depends/sources
+          key: depends-${{ matrix.host }}-${{ hashFiles('depends/packages/*.mk', 'depends/patches/**', 'depends/hosts/*.mk', 'depends/builders/*.mk', 'depends/funcs.mk', 'depends/Makefile') }}
+
+      - name: Build depends
+        run: make -C depends HOST=${{ matrix.host }} -j$(nproc)
+
+      - name: Configure
+        run: |
+          set -e
+          ./autogen.sh
+          CONFIG_SITE="$PWD/depends/${{ matrix.host }}/share/config.site" \
+            ./configure --prefix=/ --disable-tests --disable-bench --disable-fuzz-binary \
+            2>&1 | tee configure.out
+          # A release missing the wallet or the GUI is not a release, and configure
+          # reports both as a summary line rather than failing.
+          grep -q "with wallet   = yes" configure.out || { echo "wallet not configured"; exit 1; }
+          grep -q "with gui / qt = yes" configure.out || { echo "GUI not configured"; exit 1; }
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Check the GUI and wallet actually got built
+        run: |
+          set -e
+          EXT=""
+          [ "${{ matrix.windows }}" = "true" ] && EXT=".exe"
+          for b in bitcoin-posd bitcoin-pos-cli bitcoin-pos-tx bitcoin-pos-wallet; do
+            test -f "src/$b$EXT" || { echo "missing src/$b$EXT"; exit 1; }
+          done
+          test -f "src/qt/bitcoin-pos-qt$EXT" || { echo "GUI was not built"; exit 1; }
+
+      - name: Package
+        run: |
+          set -e
+          VER=${{ needs.version.outputs.version }}
+          DIR="bitcoin-pos-$VER"
+          EXT=""
+          [ "${{ matrix.windows }}" = "true" ] && EXT=".exe"
+          mkdir -p "dist/$DIR"
+          for b in bitcoin-pos-cli bitcoin-pos-tx bitcoin-posd bitcoin-pos-wallet; do
+            cp "src/$b$EXT" "dist/$DIR/"
+          done
+          cp "src/qt/bitcoin-pos-qt$EXT" "dist/$DIR/"
+          ${{ matrix.host }}-strip dist/$DIR/* 2>/dev/null || strip dist/$DIR/* 2>/dev/null || true
+          if [ "${{ matrix.windows }}" = "true" ]; then
+            cp doc/README_windows.txt "dist/$DIR/readme.txt"
+            ( cd dist && zip -q -r "bitcoin-pos-$VER-${{ matrix.name }}.zip" "$DIR" )
+          else
+            ( cd dist && tar czf "bitcoin-pos-$VER-${{ matrix.name }}.tar.gz" "$DIR" )
+          fi
+          ls -l dist/*.zip dist/*.tar.gz 2>/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitcoin-pos-${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    name: macos
+    runs-on: macos-13
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: brew install automake libtool pkg-config
+
+      # depends hardcodes the path of the SDK tarball extracted from Xcode, which
+      # only exists when cross-compiling from Linux. Building on macOS, the runner
+      # already has a real SDK -- point the expected path at it.
+      - name: Point depends at the runner's SDK
+        run: |
+          set -e
+          mkdir -p depends/SDKs
+          ln -s "$(xcrun --show-sdk-path)" \
+            "depends/SDKs/Xcode-11.3.1-11C505-extracted-SDK-with-libcxx-headers"
+
+      - name: Cache depends
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/built
+            depends/sources
+          key: depends-x86_64-apple-darwin16-${{ hashFiles('depends/packages/*.mk', 'depends/patches/**', 'depends/hosts/*.mk', 'depends/builders/*.mk', 'depends/funcs.mk', 'depends/Makefile') }}
+
+      - name: Build depends
+        run: make -C depends HOST=x86_64-apple-darwin16 -j$(sysctl -n hw.ncpu)
+
+      - name: Configure and build
+        run: |
+          set -e
+          ./autogen.sh
+          CONFIG_SITE="$PWD/depends/x86_64-apple-darwin16/share/config.site" \
+            ./configure --prefix=/ --disable-tests --disable-bench --disable-fuzz-binary \
+            2>&1 | tee configure.out
+          grep -q "with wallet   = yes" configure.out || { echo "wallet not configured"; exit 1; }
+          grep -q "with gui / qt = yes" configure.out || { echo "GUI not configured"; exit 1; }
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Package tarball and dmg
+        run: |
+          set -e
+          VER=${{ needs.version.outputs.version }}
+          DIR="bitcoin-pos-$VER"
+          mkdir -p "dist/$DIR"
+          for b in bitcoin-pos-cli bitcoin-pos-tx bitcoin-posd bitcoin-pos-wallet; do
+            cp "src/$b" "dist/$DIR/"
+          done
+          cp src/qt/bitcoin-pos-qt "dist/$DIR/"
+          strip dist/$DIR/* 2>/dev/null || true
+          ( cd dist && tar czf "bitcoin-pos-$VER-osx64.tar.gz" "$DIR" )
+          make deploy
+          # The volume name comes from PACKAGE_NAME, so glob rather than guess.
+          DMG=$(ls *.dmg | head -1)
+          mv "$DMG" "dist/bitcoin-pos-$VER-osx.dmg"
+          ls -l dist/*.tar.gz dist/*.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bitcoin-pos-osx
+          path: |
+            dist/*.tar.gz
+            dist/*.dmg
+          if-no-files-found: error
+
+  publish:
+    # Only when a tag was pushed. A manual run leaves the archives as workflow
+    # artifacts so a target can be tried without touching the releases page.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, build, macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Attach the archives to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          ls -l assets
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+                 --title "${GITHUB_REF_NAME}" --notes-file doc/release-notes.md --draft
+          gh release upload "${GITHUB_REF_NAME}" assets/* \
+            --repo "${GITHUB_REPOSITORY}" --clobber
