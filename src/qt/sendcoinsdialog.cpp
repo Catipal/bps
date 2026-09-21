@@ -9,6 +9,8 @@
 #include <qt/sendcoinsdialog.h>
 #include <qt/forms/ui_sendcoinsdialog.h>
 
+#include <qt/batchcomposerdialog.h>
+
 #include <qt/addresstablemodel.h>
 #include <qt/bitcoinunits.h>
 #include <qt/clientmodel.h>
@@ -81,6 +83,9 @@ SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle, QWidget *p
     {
         ui->sendButton->setText("&Delegate");
         ui->addButton->hide();
+        // A delegation needs an owner address per entry, which a two-field list
+        // cannot express, so there is nothing sensible to batch here.
+        ui->batchButton->hide();
     }
 
     GUIUtil::setupAddressWidget(ui->lineEditCoinControlChange, this);
@@ -88,6 +93,7 @@ SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle, QWidget *p
     addEntry();
 
     connect(ui->addButton, &QPushButton::clicked, this, &SendCoinsDialog::addEntry);
+    connect(ui->batchButton, &QPushButton::clicked, this, &SendCoinsDialog::batchButtonClicked);
     connect(ui->clearButton, &QPushButton::clicked, this, &SendCoinsDialog::clear);
 
     // Coin Control
@@ -503,6 +509,32 @@ void SendCoinsDialog::reject()
 void SendCoinsDialog::accept()
 {
     clear();
+}
+
+void SendCoinsDialog::batchButtonClicked()
+{
+    if (!model) return;
+
+    BatchComposerDialog dlg(this, model);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const QList<SendCoinsRecipient> recipients = dlg.recipients();
+    if (recipients.isEmpty()) return;
+
+    // An untouched form starts with one empty entry. Filling that one first keeps a
+    // stray blank row from sitting above the batch and failing validation on send.
+    for (const SendCoinsRecipient& recipient : recipients) {
+        SendCoinsEntry* entry = nullptr;
+        if (ui->entries->count() == 1) {
+            auto* first = qobject_cast<SendCoinsEntry*>(ui->entries->itemAt(0)->widget());
+            if (first && first->isClear()) entry = first;
+        }
+        if (!entry) entry = addEntry();
+        entry->setValue(recipient);
+    }
+
+    updateTabsAndLabels();
+    coinControlUpdateLabels();
 }
 
 SendCoinsEntry *SendCoinsDialog::addEntry()

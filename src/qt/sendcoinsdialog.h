@@ -57,6 +57,8 @@ public Q_SLOTS:
     SendCoinsEntry *addEntry();
     void updateTabsAndLabels();
     void setBalance(const interfaces::WalletBalances& balances);
+    //! Fill the form from a pasted or loaded list of payments.
+    void batchButtonClicked();
 
 Q_SIGNALS:
     void coinsSent(const uint256& txid);
