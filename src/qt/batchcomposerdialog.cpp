@@ -17,7 +17,6 @@
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QSet>
 #include <QTableWidgetItem>
 #include <QTextStream>
@@ -80,17 +79,26 @@ void BatchComposerDialog::on_clearButton_clicked()
     ui->input->clear();
 }
 
+namespace {
+//! Addresses never contain any of these, so any of them can separate the fields.
+bool hasSeparator(const QString& line)
+{
+    return line.contains(',') || line.contains(';') || line.contains('\t');
+}
+
+QStringList splitOnSeparators(const QString& line)
+{
+    QString normalised = line;
+    normalised.replace(';', ',').replace('\t', ',');
+    return normalised.split(',');
+}
+} // namespace
+
 QList<BatchComposerDialog::Row> BatchComposerDialog::parseText(const QString& text) const
 {
     QList<Row> rows;
     if (!model || !model->getOptionsModel()) return rows;
     const int unit = model->getOptionsModel()->getDisplayUnit();
-
-    // Addresses never contain these, so any of them can separate the fields. Plain
-    // whitespace is accepted too, but only when the line splits into exactly two
-    // pieces -- otherwise a label with a space in it would be read as extra fields.
-    static const QRegularExpression separators("[,;\t]");
-    static const QRegularExpression whitespace("\\s+");
 
     QSet<QString> seen;
     const QStringList lines = text.split('\n');
@@ -102,10 +110,12 @@ QList<BatchComposerDialog::Row> BatchComposerDialog::parseText(const QString& te
         row.line = i + 1;
 
         QStringList fields;
-        if (line.contains(separators)) {
-            fields = line.split(separators);
+        if (hasSeparator(line)) {
+            fields = splitOnSeparators(line);
         } else {
-            fields = line.split(whitespace, Qt::SkipEmptyParts);
+            // simplified() collapses runs of whitespace, so splitting on a single
+            // space cannot produce empty pieces.
+            fields = line.simplified().split(' ');
             if (fields.size() != 2) {
                 // One field is an address with no amount; three or more can only be a
                 // label that was never separated from the rest.
