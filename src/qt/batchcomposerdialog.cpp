@@ -100,7 +100,6 @@ QList<BatchComposerDialog::Row> BatchComposerDialog::parseText(const QString& te
     if (!model || !model->getOptionsModel()) return rows;
     const int unit = model->getOptionsModel()->getDisplayUnit();
 
-    QSet<QString> seen;
     const QStringList lines = text.split('\n');
     for (int i = 0; i < lines.size(); ++i) {
         const QString line = lines.at(i).trimmed();
@@ -141,11 +140,8 @@ QList<BatchComposerDialog::Row> BatchComposerDialog::parseText(const QString& te
             row.error = tr("could not read the amount \"%1\"").arg(amount_str);
         } else if (row.amount <= 0) {
             row.error = tr("amount must be greater than zero");
-        } else if (seen.contains(row.address)) {
-            row.warning = tr("this address is already in the list");
         }
 
-        if (row.error.isEmpty()) seen.insert(row.address);
         rows.append(row);
     }
     return rows;

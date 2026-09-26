@@ -196,9 +196,6 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
         return OK;
     }
 
-    QSet<QString> setAddress; // Used to detect duplicates
-    int nAddresses = 0;
-
     // Pre-check input data for validity
     for (const SendCoinsRecipient &rcp : recipients)
     {
@@ -213,9 +210,6 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
             {
                 return InvalidAmount;
             }
-            setAddress.insert(rcp.address);
-            ++nAddresses;
-
             CScript scriptPubKey;
             CTxDestination out = DecodeDestination(rcp.address.toStdString());
 
@@ -262,10 +256,9 @@ WalletModel::SendCoinsReturn WalletModel::prepareTransaction(WalletModelTransact
             total += rcp.amount;
         }
     }
-    if(setAddress.size() != nAddresses)
-    {
-        return DuplicateAddress;
-    }
+    // Paying the same address more than once in one transaction is valid -- each entry
+    // becomes its own output -- and on a staking chain it is a normal way to split coins
+    // into several stakeable pieces. It used to be refused outright.
 
     CAmount nBalance = m_wallet->getAvailableBalance(coinControl, fIncludeDelegated);
 
