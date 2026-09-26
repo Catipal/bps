@@ -51,9 +51,19 @@ WalletTx MakeWalletTx(CWallet& wallet, const CWalletTx& wtx)
     for (const auto& txout : wtx.tx->vout) {
         result.txout_is_mine.emplace_back(wallet.IsMine(txout));
         result.txout_address.emplace_back();
-        result.txout_address_is_mine.emplace_back(ExtractDestination(txout.scriptPubKey, result.txout_address.back()) ?
-                                                      wallet.IsMine(result.txout_address.back()) :
-                                                      ISMINE_NO);
+        // A cold-stake output is shown as the delegation address it was paid to.
+        // ExtractDestination would give the owner's key alone, which is not an address
+        // anyone handed out, so a received payment showed up under an address the user
+        // had never seen.
+        ColdStakeDestination cold;
+        bool have_address;
+        if (ExtractColdStakeDestination(txout.scriptPubKey, cold)) {
+            result.txout_address.back() = cold;
+            have_address = true;
+        } else {
+            have_address = ExtractDestination(txout.scriptPubKey, result.txout_address.back());
+        }
+        result.txout_address_is_mine.emplace_back(have_address ? wallet.IsMine(result.txout_address.back()) : ISMINE_NO);
     }
     result.credit = wtx.GetCredit(ISMINE_ALL);
     result.debit = wtx.GetDebit(ISMINE_ALL);

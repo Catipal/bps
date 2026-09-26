@@ -188,6 +188,31 @@ bool TransactionRecord::decomposeP2CS(const CWallet* wallet, const CWalletTx* wt
                                            const CAmount& nCredit, const CAmount& nDebit,
                                            QList<TransactionRecord>& parts)
 {
+    // With delegation addresses, a cold-stake output no longer means a transaction
+    // *is* a delegation. It may be an ordinary payment to one, a payment received at
+    // one, or the delegated change of an ordinary send -- and taking all of those over
+    // here showed a received payment under the staker's view of somebody else's coins,
+    // and every send from an auto-delegating wallet as a "Stake delegation" with no
+    // recipient. Those go to the generic decomposition, which shows them as the
+    // payments they are; only stakes, delegations and undelegations stay here.
+    if (!wtx->IsCoinStake()) {
+        const bool from_me = wtx->IsFromMe(ISMINE_ALL);
+        bool leaves_wallet = false;
+        bool owns_a_delegation = false;
+        for (const CTxOut& txout : wtx->tx->vout) {
+            const isminetype mine = wallet->IsMine(txout);
+            if (mine == ISMINE_NO) leaves_wallet = true;
+            if (txout.scriptPubKey.IsPayToColdStaking() && (mine & ISMINE_SPENDABLE_DELEGATED)) {
+                owns_a_delegation = true;
+            }
+        }
+        // Value went to somebody else: a send, whatever shape the change took.
+        if (from_me && leaves_wallet) return false;
+        // Somebody paid one of our delegation addresses: a receive. A wallet holding
+        // only the staking key does not own these coins and keeps the staker's view.
+        if (!from_me && owns_a_delegation) return false;
+    }
+
     if (wtx->HasP2CSOutputs()) {
         // Delegate tx.
         TransactionRecord sub(wtx->GetHash(), wtx->GetTxTime());

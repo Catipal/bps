@@ -361,6 +361,15 @@ CScript GetScriptForMultisig(int nRequired, const std::vector<CPubKey>& keys)
     return script;
 }
 
+bool ExtractColdStakeDestination(const CScript& script, ColdStakeDestination& dest)
+{
+    std::vector<valtype> solutions;
+    if (Solver(script, solutions) != TxoutType::COLDSTAKE) return false;
+    // solutions[0] is the staking key hash, [1] the owner's; see MatchPayToColdStaking.
+    dest = ColdStakeDestination(uint160(solutions[0]), uint160(solutions[1]));
+    return true;
+}
+
 CScript GetScriptForStakeDelegation(const CKeyID& stakingKey, const CKeyID& spendingKey)
 {
     CScript script;

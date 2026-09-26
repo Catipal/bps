@@ -89,6 +89,10 @@ class AutoDelegationTest(BitcoinTestFramework):
         staker_hash = node.validateaddress(deleg["address"])["staker_pubkeyhash"]
         # It is a receiving address like any other, so the GUI can list it.
         assert deleg["address"] in self.book(user)
+        # ...and a payment to it is a receive, not change. The wallet used to look
+        # the script up by its owner key alone, which is never recorded, so every
+        # payment to a delegation address was classed as change.
+        assert_equal(user.getaddressinfo(deleg["address"])["ischange"], False)
 
         self.log.info("Receiving from an ordinary address delegates on arrival")
         # The sender is a stock wallet paying a normal sendtoaddress; nothing about

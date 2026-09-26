@@ -1481,6 +1481,15 @@ bool CWallet::IsChange(const CScript& script) const
     AssertLockHeld(cs_wallet);
     if (IsMine(script))
     {
+        // A delegation address is recorded under the address that was handed out,
+        // which names both keys. ExtractDestination gives only the owner key, which is
+        // deliberately never recorded, so without this every payment received at a
+        // delegation address looked like change. Delegated change is never recorded
+        // at all, so it still counts as change -- which it is.
+        ColdStakeDestination cold;
+        if (ExtractColdStakeDestination(script, cold)) {
+            return !FindAddressBookEntry(cold);
+        }
         CTxDestination address;
         if (!ExtractDestination(script, address))
             return true;

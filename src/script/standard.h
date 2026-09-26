@@ -295,6 +295,15 @@ CScript GetScriptForRawPubKey(const CPubKey& pubkey);
 CScript GetScriptForMultisig(int nRequired, const std::vector<CPubKey>& keys);
 
 /** Generate a coldstake delegation script. */
+/**
+ * The delegation address a cold-stake script pays, if it is one.
+ *
+ * ExtractDestination reports a single key for these scripts -- the owner's, or the
+ * staker's -- which is what the listing RPCs have always shown. Anything that has to
+ * name the address the coins were actually sent to needs both keys, and this is it.
+ */
+bool ExtractColdStakeDestination(const CScript& script, ColdStakeDestination& dest);
+
 CScript GetScriptForStakeDelegation(const CKeyID& stakingKey, const CKeyID& spendingKey);
 
 #endif // BITCOIN_SCRIPT_STANDARD_H
