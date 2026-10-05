@@ -1184,6 +1184,12 @@ public:
     CAmount GetCredit(const CTxOut& txout, const isminefilter& filter) const;
     bool IsChange(const CTxOut& txout) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool IsChange(const CScript& script) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    /**
+     * The address an output pays, as the user knows it. That is ExtractDestination's
+     * answer except for a P2CS output paid to a delegation address, which ExtractDestination
+     * reports as its owner key alone -- a key this wallet deliberately never records.
+     */
+    bool ExtractOutputDestination(const CScript& script, CTxDestination& dest, bool fColdStake = false) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     CAmount GetChange(const CTxOut& txout) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool IsMine(const CTransaction& tx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool IsRelevantToMe_MPOS(const CTransaction& tx) const;

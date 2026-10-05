@@ -1302,7 +1302,7 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
 
         for (const CTxOut& txout : wtx.tx->vout) {
             CTxDestination address;
-            if (ExtractDestination(txout.scriptPubKey, address) && wallet.IsMine(address) && address_set.count(address)) {
+            if (wallet.ExtractOutputDestination(txout.scriptPubKey, address) && wallet.IsMine(address) && address_set.count(address)) {
                 amount += txout.nValue;
             }
         }
@@ -1672,7 +1672,8 @@ static UniValue ListReceived(const CWallet* const pwallet, const UniValue& param
     if (!params[1].isNull())
         fIncludeEmpty = params[1].get_bool();
 
-    isminefilter filter = ISMINE_SPENDABLE;
+    // Delegated coins included, as in listtransactions.
+    isminefilter filter = ISMINE_SPENDABLE_ALL;
 
     if (ParseIncludeWatchonly(params[2], *pwallet)) {
         filter |= ISMINE_WATCH_ONLY;
@@ -1704,7 +1705,7 @@ static UniValue ListReceived(const CWallet* const pwallet, const UniValue& param
         for (const CTxOut& txout : wtx.tx->vout)
         {
             CTxDestination address;
-            if (!ExtractDestination(txout.scriptPubKey, address))
+            if (!pwallet->ExtractOutputDestination(txout.scriptPubKey, address))
                 continue;
 
             if (has_filtered_address && !(filtered_address == address)) {
@@ -2021,7 +2022,8 @@ static RPCHelpMan listtransactions()
 {
     return RPCHelpMan{"listtransactions",
                 "\nIf a label name is provided, this will return only incoming transactions paying to addresses with the specified label.\n"
-                "\nReturns up to 'count' most recent transactions skipping the first 'from' transactions.\n",
+                "\nReturns up to 'count' most recent transactions skipping the first 'from' transactions.\n"
+                "Coins delegated for cold staking count as this wallet's when it holds the owner key.\n",
                 {
                     {"label|dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED_NAMED_ARG, "If set, should be a valid label name to return only incoming transactions\n"
                           "with the specified label, or \"*\" to disable filtering and return all transactions."},
@@ -2087,7 +2089,10 @@ static RPCHelpMan listtransactions()
     int nFrom = 0;
     if (!request.params[2].isNull())
         nFrom = request.params[2].get_int();
-    isminefilter filter = ISMINE_SPENDABLE;
+    // Delegated coins are this wallet's own -- only its owner key can spend them -- so
+    // they belong in its history. Leaving them out hid every payment to a delegation
+    // address and every spend an auto-delegating wallet makes.
+    isminefilter filter = ISMINE_SPENDABLE_ALL;
 
     if (ParseIncludeWatchonly(request.params[3], *pwallet)) {
         filter |= ISMINE_WATCH_ONLY;
@@ -2198,7 +2203,8 @@ static RPCHelpMan listsinceblock()
     Optional<int> height = MakeOptional(false, int()); // Height of the specified block or the common ancestor, if the block provided was in a deactivated chain.
     Optional<int> altheight; // Height of the specified block, even if it's in a deactivated chain.
     int target_confirms = 1;
-    isminefilter filter = ISMINE_SPENDABLE;
+    // Delegated coins included, as in listtransactions.
+    isminefilter filter = ISMINE_SPENDABLE_ALL;
 
     uint256 blockId;
     if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
@@ -2338,7 +2344,8 @@ static RPCHelpMan gettransaction()
 
     uint256 hash(ParseHashV(request.params[0], "txid"));
 
-    isminefilter filter = ISMINE_SPENDABLE;
+    // Delegated coins included, as in listtransactions.
+    isminefilter filter = ISMINE_SPENDABLE_ALL;
 
     if (ParseIncludeWatchonly(request.params[1], *pwallet)) {
         filter |= ISMINE_WATCH_ONLY;

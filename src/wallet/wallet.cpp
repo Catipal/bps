@@ -1484,11 +1484,12 @@ bool CWallet::IsChange(const CScript& script) const
         // A delegation address is recorded under the address that was handed out,
         // which names both keys. ExtractDestination gives only the owner key, which is
         // deliberately never recorded, so without this every payment received at a
-        // delegation address looked like change. Delegated change is never recorded
-        // at all, so it still counts as change -- which it is.
+        // delegation address looked like change. Anything else falls through to the
+        // owner key as before: a manual delegation to a recorded owner address is not
+        // change, and delegated change is recorded nowhere, so it still is.
         ColdStakeDestination cold;
-        if (ExtractColdStakeDestination(script, cold)) {
-            return !FindAddressBookEntry(cold);
+        if (ExtractColdStakeDestination(script, cold) && FindAddressBookEntry(cold)) {
+            return false;
         }
         CTxDestination address;
         if (!ExtractDestination(script, address))
@@ -1498,6 +1499,21 @@ bool CWallet::IsChange(const CScript& script) const
         }
     }
     return false;
+}
+
+bool CWallet::ExtractOutputDestination(const CScript& script, CTxDestination& dest, bool fColdStake) const
+{
+    AssertLockHeld(cs_wallet);
+    // The delegation address when it is the one this wallet handed out, or when it is
+    // somebody else's that this wallet paid -- either way it is what the user typed or
+    // gave out. A delegation this wallet set up to one of its own recorded addresses
+    // keeps being reported under that address, as it always was.
+    ColdStakeDestination cold;
+    if (ExtractColdStakeDestination(script, cold) && (FindAddressBookEntry(cold) || !IsMine(script))) {
+        dest = cold;
+        return true;
+    }
+    return ExtractDestination(script, dest, nullptr, fColdStake);
 }
 
 CAmount CWallet::GetChange(const CTxOut& txout) const
@@ -1832,7 +1848,7 @@ void CWalletTx::GetAmounts(std::list<COutputEntry>& listReceived,
         CTxDestination address;
         const bool fColdStake = (filter & ISMINE_COLD);
 
-        if (!ExtractDestination(txout.scriptPubKey, address, NULL, fColdStake) && !txout.scriptPubKey.IsUnspendable())
+        if (!pwallet->ExtractOutputDestination(txout.scriptPubKey, address, fColdStake) && !txout.scriptPubKey.IsUnspendable())
         {
             pwallet->WalletLogPrintf("CWalletTx::GetAmounts: Unknown transaction type found, txid %s\n",
                                     this->GetHash().ToString());

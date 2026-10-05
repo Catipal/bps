@@ -102,6 +102,20 @@ class AutoDelegationTest(BitcoinTestFramework):
         assert_equal(len(self.outs(miner, funding, "coldstake")), 1)
         assert_equal(user.getwalletinfo()["delegated"], Decimal("1000.00000000"))
 
+        self.log.info("...and the history RPCs show it, under the address that was paid")
+        # Delegated coins used to be left out of every history RPC, so this payment was
+        # invisible to listtransactions and getreceivedbyaddress reported nothing.
+        received = [e for e in user.listtransactions() if e["txid"] == funding]
+        assert_equal([(e["category"], e["address"], e["amount"]) for e in received],
+                     [("receive", deleg["address"], Decimal("1000"))])
+        assert_equal(user.gettransaction(funding)["amount"], Decimal("1000"))
+        assert_equal(user.getreceivedbyaddress(deleg["address"]), Decimal("1000"))
+        assert_equal({e["address"]: e["amount"] for e in user.listreceivedbyaddress()},
+                     {deleg["address"]: Decimal("1000")})
+        # The payer sees the address it was given, not the owner key inside it.
+        sent = [e for e in miner.listtransactions() if e["txid"] == funding and e["category"] == "send"]
+        assert_equal([e["address"] for e in sent], [deleg["address"]])
+
         self.log.info("Sending to an ordinary address spends the delegated coin without an opt-in")
         # Every coin this wallet holds is delegated. Before auto-delegation those were
         # excluded from coin selection unless asked for, which would have made the
@@ -111,6 +125,15 @@ class AutoDelegationTest(BitcoinTestFramework):
         paid = [o for o in self.outs(user, spend, "pubkeyhash")
                 if o["value"] == Decimal("10.00000000")]
         assert_equal(len(paid), 1)
+        # The spend is in the history with its fee, and the delegated change is not.
+        # Every input was delegated, so this used to show as nothing at all.
+        sent = [e for e in user.listtransactions() if e["txid"] == spend]
+        assert_equal([(e["category"], e["address"], e["amount"]) for e in sent],
+                     [("send", plain, Decimal("-10"))])
+        tx = user.gettransaction(spend)
+        assert_equal(tx["amount"], Decimal("-10"))
+        assert_greater_than(Decimal("0"), tx["fee"])
+        assert_equal(sent[0]["fee"], tx["fee"])
 
         self.log.info("...and the change comes back delegated to the same staking key")
         change = self.outs(user, spend, "coldstake")
