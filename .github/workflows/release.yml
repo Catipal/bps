@@ -5,7 +5,8 @@ name: Release
 # Push a tag like v0.22 and every target below is built from that tag and
 # uploaded. The archives match the layout v0.21 shipped: one bitcoin-pos-<ver>/
 # directory holding the five binaries flat, tar.gz for Linux and macOS, zip for
-# Windows with doc/README_windows.txt alongside as readme.txt.
+# Windows with doc/README_windows.txt alongside as readme.txt, and the Windows
+# GUI on its own as bitcoin-pos-qt.exe, as v0.21 also offered.
 #
 # Run it by hand first (Actions -> Release -> Run workflow) to check a target
 # builds before committing to a tag; with no tag the archives are left as
@@ -149,10 +150,15 @@ jobs:
           if [ "${{ matrix.windows }}" = "true" ]; then
             cp doc/README_windows.txt "dist/$DIR/readme.txt"
             ( cd dist && zip -q -r "bitcoin-pos-$VER-${{ matrix.name }}.zip" "$DIR" )
+            # v0.21 also offered the 64-bit wallet on its own, for those who only
+            # want the GUI.
+            if [ "${{ matrix.name }}" = "win64" ]; then
+              cp "dist/$DIR/bitcoin-pos-qt.exe" dist/
+            fi
           else
             ( cd dist && tar czf "bitcoin-pos-$VER-${{ matrix.name }}.tar.gz" "$DIR" )
           fi
-          ls -l dist/*.zip dist/*.tar.gz 2>/dev/null
+          ls -l dist/*.zip dist/*.tar.gz dist/*.exe 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -160,28 +166,53 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.exe
           if-no-files-found: error
 
   macos:
     needs: version
-    name: macos
-    runs-on: macos-13
+    name: osx64
+    # Cross-compiled from Linux, as Bitcoin Core 0.21 itself was built. A native
+    # build would need a macOS runner, and the only Intel one left (macos-15-intel)
+    # ships an SDK far newer than the Qt 5.9 and Boost 1.70 in depends were written
+    # against.
+    runs-on: ubuntu-22.04
     timeout-minutes: 330
+    env:
+      HOST: x86_64-apple-darwin16
+      SDK: Xcode-11.3.1-11C505-extracted-SDK-with-libcxx-headers
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
-        run: brew install automake libtool pkg-config
-
-      # depends hardcodes the path of the SDK tarball extracted from Xcode, which
-      # only exists when cross-compiling from Linux. Building on macOS, the runner
-      # already has a real SDK -- point the expected path at it.
-      - name: Point depends at the runner's SDK
         run: |
           set -e
-          mkdir -p depends/SDKs
-          ln -s "$(xcrun --show-sdk-path)" \
-            "depends/SDKs/Xcode-11.3.1-11C505-extracted-SDK-with-libcxx-headers"
+          sudo apt-get update -qq
+          # libtinfo5 is for the prebuilt clang depends downloads; the rest are what
+          # make deploy needs to draw and pack the disk image.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libtool autotools-dev automake pkg-config bison \
+            curl bsdmainutils cmake python3 python3-dev python3-setuptools \
+            libtinfo5 libz-dev libbz2-dev libcap-dev librsvg2-bin libtiff-tools imagemagick
+
+      # Apple's SDK, extracted from Xcode 11.3.1. Bitcoin Core publishes the exact
+      # extract its own CI builds against; the hash pins it.
+      - name: Cache the macOS SDK
+        uses: actions/cache@v4
+        with:
+          path: sdk-sources
+          key: ${{ env.SDK }}
+
+      - name: Fetch the macOS SDK
+        run: |
+          set -e
+          mkdir -p sdk-sources depends/SDKs
+          if [ ! -f "sdk-sources/$SDK.tar.gz" ]; then
+            curl --location --fail --retry 3 -sS \
+              "https://bitcoincore.org/depends-sources/sdks/$SDK.tar.gz" -o "sdk-sources/$SDK.tar.gz"
+          fi
+          echo "436df6dfc7073365d12f8ef6c1fdb060777c720602cc67c2dcf9a59d94290e38  sdk-sources/$SDK.tar.gz" | sha256sum -c
+          tar -C depends/SDKs -xf "sdk-sources/$SDK.tar.gz"
 
       - name: Cache depends
         uses: actions/cache@v4
@@ -189,52 +220,56 @@ jobs:
           path: |
             depends/built
             depends/sources
-          key: depends-x86_64-apple-darwin16-${{ hashFiles('depends/packages/*.mk', 'depends/patches/**', 'depends/hosts/*.mk', 'depends/builders/*.mk', 'depends/funcs.mk', 'depends/Makefile') }}
+          key: depends-${{ env.HOST }}-${{ hashFiles('depends/packages/*.mk', 'depends/patches/**', 'depends/hosts/*.mk', 'depends/builders/*.mk', 'depends/funcs.mk', 'depends/Makefile') }}
 
       - name: Build depends
-        run: make -C depends HOST=x86_64-apple-darwin16 -j$(sysctl -n hw.ncpu)
+        run: make -C depends HOST=$HOST -j$(nproc)
 
       - name: Configure and build
         run: |
           set -e
           ./autogen.sh
-          CONFIG_SITE="$PWD/depends/x86_64-apple-darwin16/share/config.site" \
+          CONFIG_SITE="$PWD/depends/$HOST/share/config.site" \
             ./configure --prefix=/ --disable-tests --disable-bench --disable-fuzz-binary \
             2>&1 | tee configure.out
           grep -q "with wallet   = yes" configure.out || { echo "wallet not configured"; exit 1; }
           grep -q "with gui / qt = yes" configure.out || { echo "GUI not configured"; exit 1; }
-          make -j$(sysctl -n hw.ncpu)
+          make -j$(nproc)
 
       - name: Package tarball and dmg
         run: |
           set -e
           VER=${{ needs.version.outputs.version }}
+          # Not dist/: a cross-built make deploy assembles the app there and clears it.
           DIR="bitcoin-pos-$VER"
-          mkdir -p "dist/$DIR"
+          mkdir -p "out/$DIR"
           for b in bitcoin-pos-cli bitcoin-pos-tx bitcoin-posd bitcoin-pos-wallet; do
-            cp "src/$b" "dist/$DIR/"
+            cp "src/$b" "out/$DIR/"
           done
-          cp src/qt/bitcoin-pos-qt "dist/$DIR/"
-          strip dist/$DIR/* 2>/dev/null || true
-          ( cd dist && tar czf "bitcoin-pos-$VER-osx64.tar.gz" "$DIR" )
+          cp src/qt/bitcoin-pos-qt "out/$DIR/"
+          depends/$HOST/native/bin/$HOST-strip out/$DIR/*
+          ( cd out && tar czf "bitcoin-pos-$VER-osx64.tar.gz" "$DIR" )
+          # Cross-built, make deploy leaves an uncompressed image; compress it the way
+          # Bitcoin Core's release process does. The name comes from PACKAGE_NAME.
           make deploy
-          # The volume name comes from PACKAGE_NAME, so glob rather than guess.
-          DMG=$(ls *.dmg | head -1)
-          mv "$DMG" "dist/bitcoin-pos-$VER-osx.dmg"
-          ls -l dist/*.tar.gz dist/*.dmg
+          depends/$HOST/native/bin/dmg dmg Bitcoin-PoS-Core.dmg "out/bitcoin-pos-$VER-osx.dmg"
+          ls -l out/*.tar.gz out/*.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: bitcoin-pos-osx
           path: |
-            dist/*.tar.gz
-            dist/*.dmg
+            out/*.tar.gz
+            out/*.dmg
           if-no-files-found: error
 
   publish:
     # Only when a tag was pushed. A manual run leaves the archives as workflow
     # artifacts so a target can be tried without touching the releases page.
-    if: startsWith(github.ref, 'refs/tags/')
+    # macOS failing does not hold back the rest: the release is created as a
+    # draft, so a missing archive is seen before anything is published, and
+    # "Re-run failed jobs" adds it once fixed.
+    if: always() && startsWith(github.ref, 'refs/tags/') && needs.build.result == 'success'
     needs: [version, build, macos]
     runs-on: ubuntu-22.04
     steps:
@@ -245,6 +280,11 @@ jobs:
           path: assets
           merge-multiple: true
 
+      # The notes are wrapped for reading in a terminal, but a release page shows
+      # every line break, so join each paragraph and list item back into one line.
+      - name: Unwrap the release notes
+        run: python3 contrib/devtools/unwrap-release-notes.py doc/release-notes.md > release-notes.md
+
       - name: Attach the archives to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -253,6 +293,6 @@ jobs:
           ls -l assets
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 \
             || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
-                 --title "${GITHUB_REF_NAME}" --notes-file doc/release-notes.md --draft
+                 --title "${GITHUB_REF_NAME}" --notes-file release-notes.md --draft
           gh release upload "${GITHUB_REF_NAME}" assets/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
