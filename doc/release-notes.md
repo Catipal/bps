@@ -12,8 +12,10 @@ How to upgrade
 
 Shut the node down, replace the binaries, and start it again. The wallet format is
 unchanged, so no reindex or rescan is needed, and you can downgrade to 0.21 by
-reversing the process. One record is added to the wallet file, recording whether
-staking was switched on; a 0.21 node ignores it.
+reversing the process. Two records may be added to the wallet file, recording
+whether staking was switched on and which staking addresses auto-delegation uses; a
+0.21 node ignores both. A 0.21 node does treat coins auto-delegation has delegated
+as delegations, which it leaves out of coin selection unless asked to include them.
 
 Passwordless cold staking
 =========================
@@ -115,7 +117,33 @@ In the GUI, the Receive tab's address type menu gains a Delegation entry, and th
 Stake page's Delegate tab now asks which kind of delegation you want: Manual, which
 is the form that was always there, or Automatic, which is where the staking
 addresses are listed, added and removed. Picking Delegation without one explains
-where to set it rather than failing.
+where to set it rather than failing. If a staking address belongs to the same
+wallet and that wallet is encrypted, the page says so: those coins stake only while
+the wallet is unlocked, and staking without a passphrase needs the staking address
+to come from a separate, unencrypted staking wallet.
+
+Delegated coins now appear in the wallet's history RPCs. listtransactions,
+listsinceblock and gettransaction count coins this wallet delegated as its own,
+since only its owner key can spend them, and listreceivedbyaddress and
+getreceivedbyaddress report payments received at a delegation address under that
+address. Previously a payment to a delegation address was invisible to all of them,
+and so was any spend made entirely from delegated coins -- which, with
+auto-delegation on, is every spend. A wallet paying somebody else's delegation
+address now lists the address it paid rather than the owner key inside it.
+
+Batch payments
+==============
+
+The Send tab has a Batch... button that takes a list of payments, pasted or loaded
+from a CSV or text file: one per line, as an address and an amount in the display
+unit, optionally followed by a label, separated by commas, semicolons, tabs or
+spaces. Lines starting with # are skipped. Each line is checked as it is entered,
+and once every line is valid they fill the send form as separate recipients, up to
+500 of them, paid in one transaction.
+
+A single send can now pay the same address more than once. Each payment becomes its
+own output, which is what a list of payouts often needs; the wallet used to refuse
+the whole send.
 
 Fixes
 =====
@@ -176,7 +204,9 @@ Tests
 
 The functional test framework did not run against this fork at all. It does now,
 and ships tests for cold staking, passwordless staking, fee compounding, the
-staking toggle, descriptor staking, wallet decryption and staking-key rotation.
+staking toggle, descriptor staking, wallet decryption, staking-key rotation and
+auto-delegation, plus one that pays a delegation address and waits for the coins to
+produce a block, for both a separate staking wallet and a wallet staking for itself.
 
 The unit suite did not finish. mempool_locks_reorg hung forever, taking everything
 after it with it: it reorgs deeper than the coinbase maturity, and this chain sets
@@ -210,5 +240,5 @@ any of them requires a hard fork with an activation height:
 SigNetParams sets neither BPSRewardMatchStep nor BPSRewardMatchHeight, so
 GetBlockSubsidy divides by an uninitialised value on signet.
 
-This release has been tested on regtest only. It has not been run on testnet or
-mainnet, and has had no external review.
+Beyond the regtest suites, this release has been run against mainnet, but it has not
+been run on testnet and has had no external review.
