@@ -352,8 +352,10 @@ void RandAddStaticEnv(CSHA512& hasher)
     AddAllCPUID(hasher);
 #endif
 
-    // Memory locations
-    hasher << &hasher << &RandAddStaticEnv << &malloc << &errno << &environ;
+    // Memory locations. malloc's address goes in as an integer -- the same bytes --
+    // because deducing the template parameter from it (a __cdecl function on 32-bit
+    // Windows) crashes the mingw GCC 10 that builds the win32 release.
+    hasher << &hasher << &RandAddStaticEnv << reinterpret_cast<uintptr_t>(&malloc) << &errno << &environ;
 
     // Hostname
     char hname[256];
